@@ -94,21 +94,6 @@ input[type=range]{width:100%;accent-color:var(--accent);height:28px}
   <div class="info" id="songInfo"></div>
 </section>
 
-<!-- シンセ音色ラボ -->
-<section class="card">
-  <details id="labBox">
-    <summary style="font-size:16px;font-weight:800;cursor:pointer">🎛 シンセ音色ラボ <span style="font-size:12px;color:var(--sub);font-weight:600">（Moog／Prophet系のアナログシンセで音作り）</span></summary>
-    <div class="label">音色をえらぶ</div>
-    <select id="labPreset" style="width:100%;background:#11111a;color:var(--text);border:1px solid var(--line);border-radius:12px;padding:10px;font-size:15px"></select>
-    <div class="info" id="labUse"></div>
-    <div id="labKeys" style="display:flex;gap:3px;margin-top:12px;user-select:none;-webkit-user-select:none;touch-action:none"></div>
-    <div class="row"><button class="btn sub" id="labChord">和音：オフ</button><button class="btn sub" id="labPhrase">▶ フレーズで試す</button></div>
-    <div id="labParams"></div>
-    <div class="row"><button class="btn sub" id="labReset">初期値に戻す</button><button class="btn" id="labApply">この音で今の曲を鳴らし直す</button></div>
-    <div class="note">変更はこのスマホ（ブラウザ）に自動保存され、次に作る曲にも使われます。</div>
-  </details>
-</section>
-
 <!-- STEP 2 -->
 <section class="card">
   <div class="step">STEP 2</div>
@@ -200,7 +185,8 @@ class Env{constructor(a,d,s,r,sr){this.ac=1-Math.exp(-1/(Math.max(a,.0005)*sr*.4
   on(){this.st=1;} off(){if(this.st)this.st=4;}
   next(){const s=this.st;if(s===1){this.v+=this.ac*(1.3-this.v);if(this.v>=1){this.v=1;this.st=2;}}else if(s===2){this.v+=this.dc*(this.s-this.v);}else if(s===4){this.v-=this.rc*this.v;if(this.v<1e-5){this.v=0;this.st=0;}}return this.v;}}
 class Voice{
-  constructor(P,sr,f,vel,pan,det,off){
+  constructor(P,sr,f,vel,pan,det,off,e){
+    this.cm=(e&&e.cm)||1;this.em=(e&&e.em)||0;
     this.f=f;this.tf=f;this.vel=vel;this.det=det+(Math.random()-.5)*P.slop;this.det2=(Math.random()-.5)*P.slop;
     this.off=off;this.rel=false;this.dead=false;this.cc=0;this.age=0;
     this.p1=Math.random();this.p2=Math.random();this.ps=Math.random();
@@ -209,7 +195,7 @@ class Voice{
     const a=(Math.max(-1,Math.min(1,pan))+1)*Math.PI/4;this.gl=Math.cos(a)*1.414;this.gr=Math.sin(a)*1.414;
     this.dr=0;this.drT=0;this.note=69+12*Math.log2(f/440);this.pe=P.pEnv;
     this.d1=0;this.d2=0;this.ds=0;this.g=0;this.k=0;this.a1=0;this.a2=0;this.a3=0;this.kk=2;this.pw=.5;this.pw2=.5;this.fmI=0;}
-  retrig(P,f,vel,off){this.tf=f;if(!(P.glide>0))this.f=f;this.vel=vel;this.off=off;this.rel=false;this.dead=false;this.ae.on();this.fe.on();this.pe=P.pEnv;this.note=69+12*Math.log2(f/440);this.age=0;}
+  retrig(P,f,vel,off,e){this.cm=(e&&e.cm)||1;this.em=(e&&e.em)||0;this.tf=f;if(!(P.glide>0))this.f=f;this.vel=vel;this.off=off;this.rel=false;this.dead=false;this.ae.on();this.fe.on();this.pe=P.pEnv;this.note=69+12*Math.log2(f/440);this.age=0;}
   render(L,R,a,b,f0,P,lfo,sr){
     const lad=P.lad;
     for(let i=a;i<b;i++){
@@ -222,7 +208,7 @@ class Voice{
         const fq=this.f*Math.pow(2,cents/1200);
         this.d1=Math.min(.45,fq*P.o1r/sr);this.d2=Math.min(.45,fq*P.o2r*Math.pow(2,(P.o2det+this.det2)/1200)/sr);this.ds=this.d1*.5;
         const fe=this.fe.v;
-        let fc=P.cut*Math.pow(2,P.fEnv*fe+P.kt*(this.note-60)/12+P.lfoFilt*lfo*ld+P.velF*(this.vel-.8));
+        let fc=P.cut*this.cm*Math.pow(2,(P.fEnv+this.em)*fe+P.kt*(this.note-60)/12+P.lfoFilt*lfo*ld+P.velF*(this.vel-.8));
         if(fc>sr*.42)fc=sr*.42;if(fc<25)fc=25;
         if(lad){this.g=1-Math.exp(-TP*fc/sr);this.k=P.res*4*(this.g>.55?.55/this.g:1);}
         else{const g=Math.tan(Math.PI*fc/sr),kk=2-2*Math.min(P.res,.97);this.a1=1/(1+g*(g+kk));this.a2=g*this.a1;this.a3=g*this.a2;this.kk=kk;}
@@ -259,8 +245,8 @@ class KibunSynth extends AudioWorkletProcessor{
     let end=0;for(const e of this.ev)end=Math.max(end,e.s+e.d);this.endF=Math.ceil((end+P.aR*4+.5)*sr);
     this.port.onmessage=m=>{if(m.data&&m.data.off){const f=currentFrame;for(const v of this.vs)v.off=Math.min(v.off,f);this.endF=Math.min(this.endF,f+Math.ceil((P.aR*4+.3)*sr));}};}
   spawn(e){const P=this.P,sr=sampleRate,off=Math.round((e.s+e.d)*sr),U=Math.max(1,P.uni|0),sc=1/Math.sqrt(U);
-    const make=f=>{const out=[];for(let u=0;u<U;u++){const k=U>1?u/(U-1)-.5:0;const v=new Voice(P,sr,f,(e.v||1)*sc,(e.p||0)+k*2*P.uSpread,k*2*P.uDet,off);out.push(v);this.vs.push(v);}return out;};
-    if(P.mono){const f=e.f[e.f.length-1];if(this.mono&&!this.mono[0].dead){for(const v of this.mono)v.retrig(P,f,(e.v||1)*sc,off);}else this.mono=make(f);return;}
+    const make=f=>{const out=[];for(let u=0;u<U;u++){const k=U>1?u/(U-1)-.5:0;const v=new Voice(P,sr,f,(e.v||1)*sc,(e.p||0)+k*2*P.uSpread,k*2*P.uDet,off,e);out.push(v);this.vs.push(v);}return out;};
+    if(P.mono){const f=e.f[e.f.length-1];if(this.mono&&!this.mono[0].dead){for(const v of this.mono)v.retrig(P,f,(e.v||1)*sc,off,e);}else this.mono=make(f);return;}
     for(const f of e.f)make(f);
     if(this.vs.length>72){this.vs.sort((a,b)=>(b.rel?1:0)-(a.rel?1:0));this.vs.splice(0,this.vs.length-72);}}
   process(_,outs){const o=outs[0],L=o[0],R=o[1]||o[0],n=L.length,sr=sampleRate,f0=currentFrame,P=this.P;
@@ -299,8 +285,7 @@ const SYN_PRESETS={
 };
 const SYNTH_MAP={supersaw:'superSaw',pluck:'pluckPoly',pad:'polyPad',strings:'stringMachine',brass:'brassPoly',bell:'bellFM',chip:'chipSquare',fbsaw:'futureChord',
   sawb:'fatBass',synthb:'synthBass',reese:'reeseBass',sub:'subBass','808':'bass808',guide:'leadGuide'};
-let SYN_EDITS={};try{SYN_EDITS=JSON.parse(localStorage.getItem('kibun_syn')||'{}')||{};}catch(e){}
-const synPreset=name=>Object.assign({},SYN_DEF,SYN_PRESETS[name],SYN_EDITS[name]||{});
+const synPreset=name=>Object.assign({},SYN_DEF,SYN_PRESETS[name]);
 let SYN_URL=null;const SYN_OK=new WeakSet();
 async function loadSynth(ctx){
   if(SYN_OK.has(ctx))return true;if(!ctx.audioWorklet)return false;
@@ -310,6 +295,108 @@ async function loadSynth(ctx){
 }
 function synthNode(ctx,preset,events,dest){
   const n=new AudioWorkletNode(ctx,'kibun-synth',{numberOfInputs:0,numberOfOutputs:1,outputChannelCount:[2],processorOptions:{preset,events}});n.connect(dest);return n;}
+
+/* ============ アナログ・ドラムマシン（808／909／Linn系を回路モデルで合成） ============ */
+function jbq(type,f,q,sr){const w=2*Math.PI*Math.min(f,sr*.45)/sr,cs=Math.cos(w),sn=Math.sin(w),al=sn/(2*q);let b0,b1,b2;
+  if(type==='lp'){b0=(1-cs)/2;b1=1-cs;b2=b0;}else if(type==='hp'){b0=(1+cs)/2;b1=-(1+cs);b2=b0;}else{b0=al;b1=0;b2=-al;}
+  const a0=1+al,a1=-2*cs/a0,a2=(1-al)/a0;b0/=a0;b1/=a0;b2/=a0;let x1=0,x2=0,y1=0,y2=0;
+  return x=>{const y=b0*x+b1*x1+b2*x2-a1*y1-a2*y2;x2=x1;x1=x;y2=y1;y1=y;return y;};}
+const tnh=(x,d)=>Math.tanh(x*d)/Math.tanh(d);
+function dKick(sr,o){const n=Math.floor(sr*o.len),out=new Float32Array(n);let ph=0;const hp=jbq('hp',1800,.7,sr);
+  for(let i=0;i<n;i++){const t=i/sr,f=o.f1+(o.f0-o.f1)*Math.exp(-t/o.pd);ph+=2*Math.PI*f/sr;
+    let y=Math.sin(ph)*Math.min(1,t/.0012)*Math.exp(-t/o.dec);y+=hp(Math.random()*2-1)*o.click*Math.exp(-t/.0025);out[i]=tnh(y,o.drive);}
+  return out;}
+function dSnare(sr,o){const n=Math.floor(sr*o.len),out=new Float32Array(n);let p1=0,p2=0;const hp=jbq('hp',o.hpF,.7,sr),bp=jbq('bp',o.bpF,.9,sr);
+  for(let i=0;i<n;i++){const t=i/sr,pm=1+.18*Math.exp(-t/.008);p1+=2*Math.PI*o.t1*pm/sr;p2+=2*Math.PI*o.t2*pm/sr;
+    const body=(Math.sin(p1)*.62+Math.sin(p2)*.38)*Math.exp(-t/o.bd),nz=Math.random()*2-1;
+    const noise=(hp(nz)*.7+bp(nz)*.6)*Math.exp(-t/o.nd)*o.nAmt;out[i]=tnh((body+noise)*Math.min(1,t/.0008),o.drive);}
+  return out;}
+function dClap(sr,o){const n=Math.floor(sr*.6),out=new Float32Array(n);const bp=jbq('bp',o.f,1.3,sr),hp=jbq('hp',600,.7,sr);
+  for(let i=0;i<n;i++){const t=i/sr;let e=0;for(const s of [0,.0105,.021])if(t>=s&&t<s+.012)e=Math.max(e,Math.exp(-(t-s)/.0035));
+    if(t>=.03)e=Math.max(e,Math.exp(-(t-.03)/o.tail));else if(t>=.021)e=Math.max(e,.7);out[i]=hp(bp(Math.random()*2-1))*e*2.2;}
+  return out;}
+const HATF=[205.3,304.4,369.6,522.7,540,800];
+function dMetal(sr,o){const n=Math.floor(sr*o.len),out=new Float32Array(n);const ph=HATF.map(()=>Math.random());
+  const bp=jbq('bp',o.bpF,.9,sr),hp=jbq('hp',o.hpF,.7,sr),hp2=jbq('hp',o.hpF,.7,sr);
+  for(let i=0;i<n;i++){const t=i/sr;let s=0;for(let k=0;k<6;k++){ph[k]+=HATF[k]*o.tune/sr;if(ph[k]>=1)ph[k]-=1;s+=ph[k]<.5?1:-1;}
+    const e=Math.min(1,t/.0006)*Math.exp(-t/o.dec);out[i]=(hp(bp(s*.18))+hp2(Math.random()*2-1)*o.noise)*e*1.4;}
+  return out;}
+function dRim(sr,o){const n=Math.floor(sr*.08),out=new Float32Array(n);const hp=jbq('hp',3000,.7,sr);
+  for(let i=0;i<n;i++){const t=i/sr;out[i]=(Math.sin(2*Math.PI*o.f*t)*.55+Math.sin(2*Math.PI*o.f*.29*t)*.45)*Math.exp(-t/.011)+hp(Math.random()*2-1)*.35*Math.exp(-t/.004);}
+  return out;}
+function dTone(sr,o){const n=Math.floor(sr*o.len),out=new Float32Array(n);let ph=0;const bp=jbq('bp',o.f*3,1,sr);
+  for(let i=0;i<n;i++){const t=i/sr,f=o.f*(1+o.bend*Math.exp(-t/o.pd));ph+=2*Math.PI*f/sr;out[i]=(Math.sin(ph)*Math.exp(-t/o.dec)+bp(Math.random()*2-1)*o.noise*Math.exp(-t/.01))*Math.min(1,t/.0008);}
+  return out;}
+function dShaker(sr,o){const n=Math.floor(sr*.12),out=new Float32Array(n);const hp=jbq('hp',5500,.7,sr),bp=jbq('bp',o.f,1.5,sr);
+  for(let i=0;i<n;i++){const t=i/sr,e=Math.min(1,t/o.att)*Math.exp(-Math.max(0,t-o.att)/.035);const nz=Math.random()*2-1;out[i]=(hp(nz)*.6+bp(nz)*.8)*e;}
+  return out;}
+const R2=([a,b])=>a+Math.random()*(b-a);
+const KITS={
+  '808':{kick:{f0:[120,150],f1:[44,50],pd:[.03,.05],dec:[.35,.65],click:[.08,.2],drive:[1.1,1.5],len:1.1},
+    snare:{t1:[225,250],t2:[460,500],bd:[.04,.07],nd:[.09,.15],nAmt:[.75,.95],hpF:[1800,2400],bpF:[4500,6000],drive:[1,1.3],len:.4},
+    clap:{f:[1000,1250],tail:[.12,.2]},hat:{dec:[.028,.045],tune:[.97,1.03],noise:[0,.12],bpF:[10000,10000],hpF:[7000,7000],len:.15},
+    ohat:{dec:[.22,.38],tune:[.97,1.03],noise:[0,.12],bpF:[10000,10000],hpF:[7000,7000],len:.9},crash:{dec:[.9,1.4],tune:[.95,1],noise:[.25,.4],bpF:[7000,7000],hpF:[4500,4500],len:2.2},
+    rim:{f:[1650,1750]},conga:{f:[300,340],bend:[.12,.18],pd:[.012,.018],dec:[.16,.22],noise:[.05,.1],len:.4},tom:{f:[95,115],bend:[.4,.6],pd:[.04,.06],dec:[.25,.35],noise:[.05,.1],len:.6},shaker:{f:[7000,8500],att:[.006,.012]}},
+  '909':{kick:{f0:[230,280],f1:[48,55],pd:[.018,.028],dec:[.24,.38],click:[.45,.75],drive:[1.8,2.5],len:.8},
+    snare:{t1:[180,200],t2:[330,360],bd:[.04,.06],nd:[.14,.21],nAmt:[1,1.25],hpF:[800,1200],bpF:[3000,4000],drive:[1.4,1.9],len:.45},
+    clap:{f:[1100,1400],tail:[.15,.24]},hat:{dec:[.035,.06],tune:[1.1,1.25],noise:[.35,.5],bpF:[9000,11000],hpF:[7000,8000],len:.18},
+    ohat:{dec:[.28,.45],tune:[1.1,1.25],noise:[.35,.5],bpF:[9000,11000],hpF:[7000,8000],len:1},crash:{dec:[1,1.6],tune:[1.1,1.2],noise:[.5,.7],bpF:[7000,8000],hpF:[4000,5000],len:2.4},
+    rim:{f:[1700,1850]},conga:{f:[310,350],bend:[.12,.18],pd:[.01,.016],dec:[.14,.2],noise:[.08,.12],len:.4},tom:{f:[100,125],bend:[.5,.7],pd:[.04,.06],dec:[.22,.3],noise:[.1,.15],len:.6},shaker:{f:[7500,9000],att:[.005,.01]}},
+  'linn':{kick:{f0:[170,200],f1:[55,65],pd:[.014,.022],dec:[.14,.22],click:[.35,.55],drive:[1.3,1.7],len:.5},
+    snare:{t1:[170,195],t2:[300,340],bd:[.06,.09],nd:[.17,.25],nAmt:[.9,1.1],hpF:[500,800],bpF:[1800,2500],drive:[1.2,1.5],len:.5},
+    clap:{f:[900,1150],tail:[.18,.28]},hat:{dec:[.04,.07],tune:[1.2,1.4],noise:[.5,.7],bpF:[8500,10000],hpF:[6000,7000],len:.2},
+    ohat:{dec:[.3,.5],tune:[1.2,1.4],noise:[.5,.7],bpF:[8500,10000],hpF:[6000,7000],len:1},crash:{dec:[1.1,1.7],tune:[1.15,1.3],noise:[.55,.75],bpF:[6500,7500],hpF:[4000,4500],len:2.4},
+    rim:{f:[1500,1650]},conga:{f:[290,330],bend:[.1,.15],pd:[.012,.018],dec:[.15,.2],noise:[.06,.1],len:.4},tom:{f:[110,140],bend:[.3,.45],pd:[.03,.05],dec:[.2,.3],noise:[.12,.18],len:.6},shaker:{f:[6500,8000],att:[.008,.014]}}
+};
+const GENRE_KIT={kawaii:['909'],band:['linn'],drock:['909'],city:['linn'],emo:['linn'],yoa:['909','linn'],zuto:['linn'],kfb:['808'],afro:['909'],ukg:['909'],phonk:['808'],plugg:['808'],dream:['linn'],bedroom:['808','linn']};
+const KIT_GAIN={kick:.95,snare:.5,clap:.42,hat:.17,ohat:.12,shaker:.12,rim:.26,conga:.34,tom:.4,crash:.14};
+function chooseKit(song){if(song.kitSpec)return song.kitSpec;const name=pick(GENRE_KIT[song.genre]||['909']),K=KITS[name],spec={name};
+  for(const part in K){spec[part]={};for(const k in K[part]){const v=K[part][k];spec[part][k]=Array.isArray(v)?R2(v):v;}}
+  if(song.genre==='phonk')spec.kick.drive*=1.6;if(song.genre==='emo'||song.genre==='dream')spec.kick.dec*=.9;
+  song.kitSpec=spec;return spec;}
+function makeKitData(song,sr){song.kitData=song.kitData||{};if(song.kitData[sr])return song.kitData[sr];const S=chooseKit(song),D={};
+  const norm=a=>{let p=0;for(let i=0;i<a.length;i++)p=Math.max(p,Math.abs(a[i]));if(p>0)for(let i=0;i<a.length;i++)a[i]/=p;return a;};
+  const vars=(fn,o,n)=>{const out=[];for(let i=0;i<n;i++){const oo=Object.assign({},o);if(oo.dec)oo.dec*=R2([.94,1.06]);out.push(norm(fn(sr,oo)));}return out;};
+  D.kick=vars(dKick,S.kick,1);D.snare=vars(dSnare,S.snare,3);D.clap=vars(dClap,S.clap,3);D.hat=vars(dMetal,S.hat,4);D.ohat=vars(dMetal,S.ohat,2);
+  D.crash=vars(dMetal,S.crash,1);D.rim=vars(dRim,S.rim,2);D.tom=vars(dTone,S.tom,1);D.shaker=vars(dShaker,S.shaker,3);
+  D.conga=[norm(dTone(sr,S.conga)),norm(dTone(sr,Object.assign({},S.conga,{f:S.conga.f*.68,dec:S.conga.dec*1.2})))];
+  song.kitData[sr]=D;return D;}
+function kitBuffers(ctx,song){const D=makeKitData(song,ctx.sampleRate),B={};
+  for(const k in D)B[k]=D[k].map(a=>{const b=ctx.createBuffer(1,a.length,ctx.sampleRate);b.getChannelData(0).set(a);return b;});return B;}
+
+/* ============ 音色の自動バリエーション（毎回ちがう・でも気持ちいい範囲） ============ */
+const VARY_COMMON={cut:['mul',.78,1.32],res:['add',-.08,.1],fEnv:['add',-.5,.5],fD:['mul',.75,1.35],drive:['mul',.92,1.3],o2det:['add',-3,3],slop:['mul',.7,1.4],uDet:['mul',.8,1.2],aR:['mul',.85,1.25]};
+const VARY_EXTRA={polyPad:{o2w:['pick','pulse','saw'],lfoSync:['pick',4,8,16],lfoFilt:['add',0,.3]},stringMachine:{lfoPitch:['add',-2,3]},pluckPoly:{ft:['pick','ladder','svf'],o2w:['pick','pulse','saw','tri']},
+  fatBass:{ms:['add',-.2,.2],glide:['mul',.6,1.6]},reeseBass:{lfoSync:['pick',2,4],lfoFilt:['add',.1,.5]},superSaw:{lfoSync:['pick',8,16],lfoFilt:['add',0,.2]},brassPoly:{fA:['mul',.7,1.5]},futureChord:{pEnv:['add',-60,40]}};
+function varyPreset(name){const P=Object.assign({},SYN_DEF,SYN_PRESETS[name]);if(name==='leadGuide')return P;const g0=P.cut;
+  const apply=(k,r)=>{if(r[0]==='mul')P[k]=(P[k]||0)*R2([r[1],r[2]]);else if(r[0]==='add')P[k]=(P[k]||0)+R2([r[1],r[2]]);else P[k]=pick(r.slice(1));};
+  for(const k in VARY_COMMON)if(k in P)apply(k,VARY_COMMON[k]);const ex=VARY_EXTRA[name]||{};for(const k in ex)apply(k,ex[k]);
+  P.res=clamp(P.res,0,.85);P.fEnv=Math.max(0,P.fEnv);P.gain*=Math.pow(g0/P.cut,.22);return P;}
+function songPreset(song,type){song.sound=song.sound||{};const n=SYNTH_MAP[type];if(!song.sound[n])song.sound[n]=varyPreset(n);
+  const P=Object.assign({},song.sound[n]);if(P.lfoSync)P.lfoRate=song.bpm/60/P.lfoSync;return P;}
+
+/* ============ 仕上げ：自動トーンバランス（ターゲット特性に寄せる） ============ */
+const BASS_HEAVY={phonk:[4,1.5],plugg:[4,1.5],kfb:[3,1],ukg:[3,1],afro:[2.5,1],drock:[2,1],bedroom:[2,.5],kawaii:[1,.5]};
+async function autoBalance(buf,genre){
+  const sr=buf.sampleRate,n=buf.length,L=buf.getChannelData(0),R=buf.numberOfChannels>1?buf.getChannelData(1):L;
+  const step=2,bands=[['lp',120,.7],['bp',300,1],['bp',1000,1],['bp',3500,1],['hp',8000,.7]].map(([t,f,q])=>({f,fn:jbq(t,f,q,sr/step),e:0}));
+  for(let i=0;i<n;i+=step){const x=(L[i]+R[i])*.5;for(const b of bands){const y=b.fn(x);b.e+=y*y;}}
+  const db=bands.map(b=>10*Math.log10(b.e+1e-12)),ref=db[2];
+  if(!autoBalance.pink||autoBalance.pinkSr!==sr){ // ピンクノイズ基準（自然なバランス）を作る
+    const pb=[['lp',120,.7],['bp',300,1],['bp',1000,1],['bp',3500,1],['hp',8000,.7]].map(([t,f,q])=>({fn:jbq(t,f,q,sr/step),e:0}));
+    let b0=0,b1=0,b2=0,b3=0,b4=0,b5=0,b6=0;for(let i=0;i<sr*3/step;i++){const w=Math.random()*2-1;b0=.99886*b0+w*.0555179;b1=.99332*b1+w*.0750759;b2=.969*b2+w*.153852;b3=.8665*b3+w*.3104856;b4=.55*b4+w*.5329522;b5=-.7616*b5-w*.016898;
+      const x=b0+b1+b2+b3+b4+b5+b6+w*.5362;b6=w*.115926;for(const b of pb){const y=b.fn(x);b.e+=y*y;}}
+    const pd=pb.map(b=>10*Math.log10(b.e+1e-12));autoBalance.pink=pd.map(d=>d-pd[2]);autoBalance.pinkSr=sr;}
+  const bh=BASS_HEAVY[genre]||[0,0];const target=autoBalance.pink.map((d,i)=>d+[2.5+bh[0],1+bh[1],0,-1,-2.5][i]);
+  const corr=db.map((d,i)=>clamp(.6*(target[i]-(d-ref)),-4,4));
+  const oc=offlineCtx(buf.numberOfChannels,n,sr),src=oc.createBufferSource();src.buffer=buf;
+  const ls=mkFilt(oc,'lowshelf',120,null);ls.gain.value=corr[0];const p1=mkFilt(oc,'peaking',300,1);p1.gain.value=corr[1];
+  const p3=mkFilt(oc,'peaking',3500,1);p3.gain.value=corr[3];const hs=mkFilt(oc,'highshelf',8000,null);hs.gain.value=corr[4];
+  const lim=oc.createDynamicsCompressor();lim.threshold.value=-3;lim.ratio.value=12;lim.attack.value=.002;lim.release.value=.12;
+  src.connect(ls);ls.connect(p1);p1.connect(p3);p3.connect(hs);hs.connect(lim);lim.connect(oc.destination);src.start(0);
+  const out=await renderOffline(oc);let pk=0;for(let c=0;c<out.numberOfChannels;c++){const d=out.getChannelData(c);for(let i=0;i<d.length;i++)pk=Math.max(pk,Math.abs(d[i]));}
+  if(pk>.95)for(let c=0;c<out.numberOfChannels;c++){const d=out.getChannelData(c),g=.95/pk;for(let i=0;i<d.length;i++)d[i]*=g;}
+  out._eq=corr.map(v=>+v.toFixed(1));return out;}
 
 /* ============ 基本ユーティリティ ============ */
 const $=s=>document.querySelector(s);
@@ -679,6 +766,10 @@ function voice(ctx,dest,type,t,f,dur,vel=1,fx=null,pan=0){
 const BASS_OCT={sub:0,'808':0,sawb:12,synthb:12,slap:12,reese:12,fingerb:12};
 function drum(ctx,dest,type,t,vel=1,fx=null,kickType='punch'){
   t=Math.max(0,t);
+  if(fx&&fx.kit&&fx.kit[type]){const vs=fx.kit[type];const s=ctx.createBufferSource();const ci=type==='conga'?(Math.random()<.5?0:1):Math.floor(Math.random()*vs.length);s.buffer=vs[ci];
+    const pan=type==='conga'?(ci?-.4:.4):({hat:.25,ohat:.3,shaker:-.35,rim:-.15,tom:.2,snare:.04,clap:-.04}[type]||0);fx.b=fx.b||{};const key='k_'+type+ci;
+    if(!fx.b[key]){const o=mkGain(ctx,1,mkPan(ctx,pan,dest));if(['snare','clap','ohat','rim','conga','tom','crash'].includes(type)&&fx.drev)o.connect(fx.drev);fx.b[key]=o;}
+    const g=mkGain(ctx,vel*KIT_GAIN[type]*(type==='hat'?rnd(.85,1.05):1),fx.b[key]);s.connect(g);s.start(t);return;}
   const nz=(dur)=>{const s=ctx.createBufferSource();s.buffer=noiseBuf(ctx);s.start(t,Math.random()*.5);s.stop(t+dur);return s;};
   const dec=(g,peak,d,tt=t)=>{g.gain.setValueAtTime(Math.max(peak,.0001),tt);g.gain.exponentialRampToValueAtTime(.0008,tt+d);};
   const rev=(node,a)=>{if(fx&&fx.drev)node.connect(fx.drev);};
@@ -724,7 +815,11 @@ function makeMaster(ctx,out,lofi){
 function scheduleSong(ctx,out,song,t0,opt={}){
   const SYN=SYN_OK.has(ctx)&&opt.synth!==false,synthQ=new Map();
   const V=(c,dest,type,t,f,dur,vel=1,fx=null,pan=0)=>{const pn=SYN&&SYNTH_MAP[type];if(!pn)return voice(c,dest,type,t,f,dur,vel,fx,pan);
-    let m=synthQ.get(dest);if(!m){m={};synthQ.set(dest,m);}(m[type]=m[type]||[]).push({s:Math.max(0,t),d:Math.max(.02,dur),f:Array.isArray(f)?f:[f],v:vel,p:pan});};
+    let m=synthQ.get(dest);if(!m){m={};synthQ.set(dest,m);}const mod=type==='guide'?{cm:1,em:0}:cmAt(t);(m[type]=m[type]||[]).push({s:Math.max(0,t),d:Math.max(.02,dur),f:Array.isArray(f)?f:[f],v:vel,p:pan,cm:mod.cm,em:mod.em});};
+  // 展開に合わせたフィルターの開閉（イントロで開いていき、Aメロは控えめ、サビ前で開き、サビで全開）
+  const barLen=16*song.s16;const cmAt=t=>{const rel=(t-t0)/barLen,b=Math.floor(rel),fr=rel-b,vb=b-song.intro;
+    if(b<song.intro)return {cm:.32+.6*(rel/song.intro),em:-.3};if(vb<3)return {cm:.82,em:0};if(vb===3)return {cm:.82+.5*fr,em:.15*fr};
+    if(vb<BARS)return {cm:1.12+.05*(vb-4),em:.3};return {cm:1,em:.1};};
   const G=GENRES[song.genre],s16=song.s16,bar=16*s16,TB=totalBars(song),vEnd=song.intro+BARS;
   if(opt.backing!==0){
     const master=makeMaster(ctx,out,G.lofi);
@@ -732,7 +827,7 @@ function scheduleSong(ctx,out,song,t0,opt={}){
     const duck=mkGain(ctx,1,master);const music=mkGain(ctx,.9,duck);
     const rev=ctx.createConvolver();rev.buffer=reverbIR(ctx);rev.connect(mkGain(ctx,G.rev*1.4,master));
     const dly=ctx.createDelay(2);dly.delayTime.value=3*s16;const dfb=mkGain(ctx,.32),dlp=mkFilt(ctx,'lowpass',3800,.7);dly.connect(dlp);dlp.connect(dfb);dfb.connect(dly);dlp.connect(mkPan(ctx,.4,mkGain(ctx,.5,master)));
-    const drev=mkGain(ctx,.35,rev);const fx={rev,dly,drev};
+    const drev=mkGain(ctx,.35,rev);const fx={rev,dly,drev,kit:opt.kit===false?null:kitBuffers(ctx,song)};
     const f0i=(G.introOpen||song.loop)?16000:2200;const introF=mkFilt(ctx,'lowpass',f0i,.7,music);introF.frequency.setValueAtTime(f0i,t0);introF.frequency.exponentialRampToValueAtTime(18000,t0+song.intro*bar);
     const SEND={clav:[.15,0],chip:[.25,.3],vchop:[.4,.35],fbsaw:[.45,.15],piano:[.35,0],ep:[.3,0],supersaw:[.45,.15],pluck:[.35,.3],bell:[.5,.35],guitar:[.2,0],cutting:[.15,0],brass:[.35,0],organ:[.35,.2],marimba:[.4,.2],cowbell:[.3,.15],cleang:[.45,.25],pad:[.7,0],strings:[.7,0]};
     const vocF=mtof((song.lo+song.hi)/2);const cv2=mkFilt(ctx,'peaking',2800,.9,introF);cv2.gain.value=-3.5;const cv1=mkFilt(ctx,'peaking',vocF*2,1.1,cv2);cv1.gain.value=-2.5;
@@ -813,7 +908,7 @@ function scheduleSong(ctx,out,song,t0,opt={}){
     }
   }
   if(opt.guide){const g=mkGain(ctx,opt.guide,out);for(const n of song.notes)V(ctx,g,opt.demo?'demo':'guide',Math.max(0,t0+n.start*s16+(opt.demo?rnd(-.03,.05):0)),mtof(n.midi),n.dur*s16*.92,1);}
-  for(const [dest,m] of synthQ)for(const type in m)synthNode(ctx,synPreset(SYNTH_MAP[type]),m[type],dest);
+  for(const [dest,m] of synthQ)for(const type in m)synthNode(ctx,songPreset(song,type),m[type],dest);
 }
 function offlineCtx(ch,len,sr){const C=window.OfflineAudioContext||window.webkitOfflineAudioContext;return new C(ch,len,sr);}
 function renderOffline(oc){return new Promise((res,rej)=>{oc.oncomplete=e=>res(e.renderedBuffer);try{const p=oc.startRendering();if(p&&p.then)p.then(res,rej);}catch(e){rej(e);}});}
@@ -923,61 +1018,14 @@ async function renderCurrent(job=genJob){
     const oc=offlineCtx(2,len,sr);await loadSynth(oc);scheduleSong(oc,oc.destination,s,0,{backing:1});let bb=await renderOffline(oc);if(job!==genJob)return;
     const og=offlineCtx(2,len,sr);await loadSynth(og);scheduleSong(og,og.destination,s,0,{backing:0,guide:1});let gb=await renderOffline(og);if(job!==genJob)return;
     if(s.loop){bb=foldLoop(c,bb,L);gb=foldLoop(c,gb,L);}
+    bb=await autoBalance(bb,s.genre);if(job!==genJob)return;
     state.backingBuf=bb;state.guideBuf=gb;$('#genStatus').textContent='できました！ STEP 2で聴いてみましょう';if(state.raw)analyzeAndMix(false);
   }catch(e){console.error(e);$('#genStatus').textContent='作曲に失敗しました。もう一度お試しください';}
   state.rendering=false;setReady();
 }
 $('#genBtn').onclick=()=>newSong();
 
-/* ---- シンセ音色ラボ ---- */
-const LAB_PARAMS=[
-  ['発振器',[['o1w','OSC1 波形','sel',['saw','pulse','tri','sine']],['o1pw','OSC1 パルス幅',.05,.95,.01],['o2w','OSC2 波形','sel',['saw','pulse','tri','sine']],['o2r','OSC2 オクターブ','sel',[.5,1,2,3.5]],
-    ['o2det','OSC2 デチューン(セント)',-50,50,1],['m2','OSC2 音量',0,1,.01],['ms','サブOSC',0,1,.01],['mn','ノイズ',0,.5,.01],['fm','FM量（ベル系）',0,6,.1]]],
-  ['ボイス',[['uni','ユニゾン数',1,5,1],['uDet','ユニゾン広がり(セント)',0,40,1],['uSpread','ステレオ幅',0,1,.01],['slop','アナログの揺らぎ',0,12,.5],['glide','グライド(秒)',0,.3,.005],['mono','モノ（ベース・リード向け）','chk']]],
-  ['フィルター',[['ft','タイプ','sel',['ladder','svf'],{ladder:'ラダー24dB（Moog系）',svf:'SVF 12dB（Prophet/OB系）'}],['cut','カットオフ(Hz)',40,12000,1,'log'],['res','レゾナンス',0,1,.01],['drive','ドライブ（太さ・歪み）',1,5,.05],
-    ['kt','キーフォロー',0,1,.01],['fEnv','EG量(オクターブ)',-2,6,.05],['fA','EG アタック',.001,2,.001,'log'],['fD','EG ディケイ',.01,3,.01,'log'],['fS','EG サステイン',0,1,.01],['fR','EG リリース',.01,3,.01,'log']]],
-  ['音量EG',[['aA','アタック',.001,2,.001,'log'],['aD','ディケイ',.01,3,.01,'log'],['aS','サステイン',0,1,.01],['aR','リリース',.01,3,.01,'log']]],
-  ['LFO・ピッチ',[['lfoRate','LFO 速さ(Hz)',.05,12,.05,'log'],['lfoPitch','LFO→ピッチ(セント)',0,50,1],['lfoFilt','LFO→フィルター',0,2,.01],['lfoPwm','LFO→パルス幅',0,.45,.01],['lfoDelay','LFO 遅れ(秒)',0,1,.01],
-    ['pEnv','ピッチEG(セント)',-1200,1200,10],['pDec','ピッチEG 長さ',.01,.5,.005,'log']]]
-];
-const BASSY=n=>['fatBass','subBass','synthBass','reeseBass','bass808'].includes(n);
-let labName='polyPad',labChord=false;
-function labUseText(n){const inst=Object.keys(SYNTH_MAP).filter(k=>SYNTH_MAP[k]===n);const gs=Object.values(GENRES).filter(g=>g.layers.some(L=>inst.includes(L.i))||inst.includes(g.bass.i)).map(g=>g.emoji+g.name);
-  return inst.includes('guide')?'使われる所：ガイドメロディ（全ジャンル）':gs.length?'使われる所：'+gs.join('・'):'';}
-function labSave(){try{localStorage.setItem('kibun_syn',JSON.stringify(SYN_EDITS));}catch(e){}}
-function labSet(k,v){const base=Object.assign({},SYN_DEF,SYN_PRESETS[labName]);SYN_EDITS[labName]=SYN_EDITS[labName]||{};if(base[k]===v)delete SYN_EDITS[labName][k];else SYN_EDITS[labName][k]=v;labSave();}
-function labRender(){
-  const P=synPreset(labName);$('#labUse').textContent=labUseText(labName);const box=$('#labParams');box.innerHTML='';
-  for(const [grp,items] of LAB_PARAMS){const h=document.createElement('div');h.className='label';h.style.cssText='margin-top:16px;color:var(--accent);font-weight:800';h.textContent=grp;box.appendChild(h);
-    for(const it of items){const [k,lab,a,b,st,sc]=it;const row=document.createElement('div');row.className='sl';
-      if(a==='sel'){const opts=b,names=it[4]||{};row.innerHTML=`<div class="top"><span>${lab}</span></div>`;const sel=document.createElement('select');sel.style.cssText='width:100%;background:#11111a;color:var(--text);border:1px solid var(--line);border-radius:10px;padding:8px;font-size:14px';
-        for(const o of opts){const op=document.createElement('option');op.value=o;op.textContent=names[o]||({saw:'ノコギリ波',pulse:'パルス（矩形）',tri:'三角波',sine:'サイン波'}[o]||o);if(String(P[k])===String(o))op.selected=true;sel.appendChild(op);}
-        sel.onchange=()=>{labSet(k,typeof opts[0]==='number'?+sel.value:sel.value);};row.appendChild(sel);}
-      else if(a==='chk'){row.className='tog';row.innerHTML=`<span>${lab}</span><label class="sw"><input type="checkbox" ${P[k]?'checked':''}><span></span></label>`;row.querySelector('input').onchange=e=>labSet(k,e.target.checked);}
-      else{const lg=sc==='log',toS=v=>lg?Math.log(v/a)/Math.log(b/a)*1000:v,fromS=x=>lg?+(a*Math.pow(b/a,x/1000)).toPrecision(3):+x;
-        const fmt=v=>Math.abs(v)>=100?Math.round(v):(+v).toFixed(st<.01?3:st<1?2:0);
-        row.innerHTML=`<div class="top"><span>${lab}</span><b>${fmt(P[k])}</b></div><input type="range" min="${lg?0:a}" max="${lg?1000:b}" step="${lg?1:st}" value="${toS(P[k])}">`;
-        const r=row.querySelector('input'),bv=row.querySelector('b');r.oninput=()=>{const v=fromS(r.value);bv.textContent=fmt(v);labSet(k,v);};}
-      box.appendChild(row);}}
-}
-const labSel=$('#labPreset');for(const n in SYN_PRESETS){const o=document.createElement('option');o.value=n;o.textContent=SYN_PRESETS[n].label;labSel.appendChild(o);}labSel.value=labName;
-labSel.onchange=()=>{labName=labSel.value;labRender();};
-async function labNote(midi){const c=getCtx();await c.resume();if(!(await loadSynth(c))){toast('このブラウザではシンセを鳴らせません');return null;}
-  const base=BASSY(labName)?midi-24:midi;const fs=(labChord&&!BASSY(labName)?[0,4,7,11]:[0]).map(i=>mtof(base+i));
-  return synthNode(c,synPreset(labName),[{s:c.currentTime+.02,d:30,f:fs,v:1,p:0}],c.destination);}
-(function(){const keys=$('#labKeys');const black=[1,3,6,8,10];
-  for(let i=0;i<=12;i++){const k=document.createElement('div');const bl=black.includes(i%12);
-    k.style.cssText=`flex:1;height:${bl?60:84}px;border-radius:6px;background:${bl?'#2c2c40':'#e9e9f2'};align-self:flex-start;cursor:pointer`;
-    let node=null;const down=async e=>{e.preventDefault();k.style.background='#ff5c8a';node=await labNote(60+i);};
-    const upf=()=>{k.style.background=bl?'#2c2c40':'#e9e9f2';if(node){try{node.port.postMessage({off:true});}catch(e){}node=null;}};
-    k.addEventListener('pointerdown',down);k.addEventListener('pointerup',upf);k.addEventListener('pointerleave',upf);k.addEventListener('pointercancel',upf);keys.appendChild(k);}})();
-$('#labChord').onclick=()=>{labChord=!labChord;$('#labChord').textContent='和音：'+(labChord?'オン':'オフ');};
-$('#labPhrase').onclick=async()=>{const c=getCtx();await c.resume();if(!(await loadSynth(c)))return;const t=c.currentTime+.05,B=BASSY(labName),ev=[];
-  const seq=B?[[36,.5],[36,.25],[48,.25],[43,.5],[41,.5]]:labChord||['polyPad','stringMachine','brassPoly','superSaw','futureChord'].includes(labName)?[[[60,64,67,71],1],[[57,60,64,67],1]]:[[60,.25],[64,.25],[67,.25],[71,.25],[72,.5],[67,.5]];
-  let tt=t;for(const [n,d] of seq){ev.push({s:tt,d:d*.9,f:(Array.isArray(n)?n:[n]).map(mtof),v:1,p:0});tt+=d;}synthNode(c,synPreset(labName),ev,c.destination);};
-$('#labReset').onclick=()=>{delete SYN_EDITS[labName];labSave();labRender();toast('初期値に戻しました');};
-$('#labApply').onclick=()=>{if(!state.song)return;renderCurrent().then(()=>toast('新しい音色で鳴らし直しました'));};
-labRender();
+
 
 /* ---- 歌詞 ---- */
 const SMALL='ゃゅょぁぃぅぇぉゎャュョァィゥェォヮ';
