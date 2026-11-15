@@ -89,6 +89,7 @@ input[type=range]{width:100%;accent-color:var(--accent);height:28px}
   <div class="chips" id="rangeChips"></div>
   <div class="label">終わり方</div>
   <div class="chips" id="endChips"></div>
+  <div class="tog" style="margin-top:14px;background:#13131d;border-radius:12px;padding:10px 12px"><span>🎮 <b>ファミコン</b> <small style="color:var(--sub)">（8bit音源で生成）</small></span><label class="sw"><input type="checkbox" id="famicom"><span></span></label></div>
   <button class="btn" id="genBtn">🎲 曲をつくる</button>
   <div class="status" id="genStatus"></div>
   <div class="info" id="songInfo"></div>
@@ -397,6 +398,117 @@ async function autoBalance(buf,genre){
   const out=await renderOffline(oc);let pk=0;for(let c=0;c<out.numberOfChannels;c++){const d=out.getChannelData(c);for(let i=0;i<d.length;i++)pk=Math.max(pk,Math.abs(d[i]));}
   if(pk>.95)for(let c=0;c<out.numberOfChannels;c++){const d=out.getChannelData(c),g=.95/pk;for(let i=0;i<d.length;i++)d[i]*=g;}
   out._eq=corr.map(v=>+v.toFixed(1));return out;}
+
+/* ============ ファミコン（2A03 APU）エミュレーション ============
+   矩形波×2（デューティ12.5/25/50/75%・4bit音量・11bitタイマーの音程量子化）
+   三角波（32段階の階段波・音量なし）／ノイズ（15bit LFSR・16周期・短周期モード）
+   非線形ミキサー（nesdev準拠）→ ファミコン本体の37Hzハイパス
+   ドライバは60.0988Hzのフレーム単位で音量・音程・デューティを書き換える（ファミコンの音楽ドライバ方式） */
+const NES={CPU:1789773,FR:60.0988,
+  DUTY:[[0,1,0,0,0,0,0,0],[0,1,1,0,0,0,0,0],[0,1,1,1,1,0,0,0],[1,0,0,1,1,1,1,1]],
+  TRI:[15,14,13,12,11,10,9,8,7,6,5,4,3,2,1,0,0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15],
+  NOISE:[4,8,16,32,64,96,128,160,202,254,380,508,762,1016,2034,4068]};
+const pulseTimer=f=>clamp(Math.round(NES.CPU/(16*f)-1),8,2047);
+const triTimer=f=>clamp(Math.round(NES.CPU/(32*f)-1),2,2047);
+function nesTimeline(F){return {
+  p:[0,1].map(()=>({vol:new Uint8Array(F),tim:new Uint16Array(F),duty:new Uint8Array(F)})),
+  t:{on:new Uint8Array(F),tim:new Uint16Array(F)},
+  n:{vol:new Uint8Array(F),per:new Uint8Array(F),mode:new Uint8Array(F)}};}
+// 楽器マクロ（FamiTracker風）：音量シーケンス・デューティ・アルペジオ・ビブラート
+function nesPulseNote(ch,a,b,notes,ins,F){
+  for(let f=a;f<b&&f<F;f++){const k=f-a;let v=ins.vol[Math.min(k,ins.vol.length-1)]*(ins.scale??1);
+    if(ins.rel&&b-f<=ins.rel)v*=(b-f)/(ins.rel+1);
+    const m=notes[Math.floor(k/(ins.arpRate||1))%notes.length];let cents=0;
+    if(ins.vib&&k>=ins.vib.delay)cents=ins.vib.depth*Math.sin(2*Math.PI*(k-ins.vib.delay)*ins.vib.rate);
+    if(ins.slide&&k<ins.slide.frames)cents+=ins.slide.cents*(1-k/ins.slide.frames);
+    ch.vol[f]=clamp(Math.round(v),0,15);ch.tim[f]=pulseTimer(mtof(m+cents/100));ch.duty[f]=ins.duty;}}
+function nesTriNote(tr,a,b,m,F){for(let f=a;f<b&&f<F;f++){tr.on[f]=1;tr.tim[f]=triTimer(mtof(m));}}
+function nesNoise(nz,a,per,mode,vols,F,scale=1){for(let k=0;k<vols.length&&a+k<F;k++){const f=a+k;nz.vol[f]=clamp(Math.round(vols[k]*scale),0,15);nz.per[f]=per;nz.mode[f]=mode;}}
+const NES_DRUM={k:[12,0,[13,9,5,2]],s:[7,0,[14,12,10,8,6,5,4,3,2,1]],c:[6,0,[13,11,9,7,5,4,3,2,1]],h:[0,0,[8,5,2]],o:[1,0,[8,8,7,6,5,4,4,3,2,1]],
+  sh:[2,0,[5,3,1]],rm:[4,1,[10,6,2]],cg:[9,0,[10,7,4,2]],tm:[10,0,[12,9,6,3,1]]};
+const NES_PRI={h:1,sh:1,o:2,cg:3,tm:3,rm:3,c:4,s:5,k:6};
+function buildNES(song,opt){
+  const G=GENRES[song.genre],s16=song.s16,FR=NES.FR,TB=totalBars(song),vEnd=song.intro+BARS,dur=songDur(song);
+  const F=Math.ceil(dur*FR)+4,T=nesTimeline(F),fr=t=>Math.max(0,Math.round(t*FR)),bar=16*s16,sw=G.swing||0;
+  const stepT=(b,i)=>(b*16+i)*s16+(i%2?sw*s16:0);
+  if(opt.guide){const ins={vol:[11,11,10,10,10,9],duty:2,vib:{delay:14,depth:14,rate:.1},rel:2};
+    for(const n of song.notes)nesPulseNote(T.p[0],fr(n.start*s16),fr((n.start+n.dur)*s16)-1,[n.midi],ins,F);return T;}
+  // 和音の配置（メロディの上）
+  let wLo=song.hi+2,wHi=song.hi+16;if(wHi>84){wLo=Math.max(48,song.lo-15);wHi=song.lo-2;}
+  const voice=c=>{const rp=pc(song.root+c[0]);const st=QUAL[c[1]].filter(iv=>iv<12).map(iv=>pc(rp+iv));const ns=[];
+    for(const p of st){for(let m=wLo;m<=wHi;m++)if(pc(m)===p){ns.push(m);break;}}return ns.sort((a,b)=>a-b);};
+  const P1v={vol:[10,9,8,7,7,6,6,5,5,4,4,3],duty:1},P1c={vol:[13,12,11,10,10,9,9,8],duty:0,arpRate:1,rel:3},
+    P2e={vol:[10,9,8,7,7,6,6,5,5,4,4,3],duty:2,scale:.45},P2c={vol:[9,9,8,8,7],duty:2,vib:{delay:10,depth:10,rate:.09},slide:{cents:-60,frames:3},rel:4};
+  const echoD=Math.max(4,Math.round(3*s16*FR));let arpI=0;const keysP=(G.layers.find(L=>/x/.test(L.p))||{p:'x..x..x...x..x..'}).p;
+  const noiseHits=[];const addN=(f,key,scale=1)=>noiseHits.push({f,key,scale});
+  const fadeStart=song.ending==='fade'?fr(vEnd*bar):1e9,fadeEnd=fadeStart+fr(2*bar);
+  for(let b=0;b<TB;b++){
+    const vb=b-song.intro,isIntro=b<song.intro,isOut=b>=vEnd,sec=isIntro?'i':(vb<4?'v':'c');
+    const chords=barChords(song,b),vs=chords.map(voice),ci=i=>chords.length>1&&i>=8?1:0;
+    if(isOut&&song.ending!=='fade'){const v=vs[0],a=fr(b*bar);
+      if(song.ending==='stab'){nesPulseNote(T.p[0],a,a+fr(3*s16),v,P1c,F);nesPulseNote(T.p[1],a,a+fr(3*s16),[v[v.length-1]],P2c,F);nesTriNote(T.t,a,a+fr(3*s16),33+pc(song.root+chords[0][0]-9)+12,F);addN(a,'s');}
+      else{nesPulseNote(T.p[0],a,a+fr(bar*1.6),v,{vol:[13,12,11,10,9,9,8,8,7,7,6,6,5,5,5,4,4,4,3,3,3,2,2,2,1],duty:0,arpRate:1},F);
+        nesPulseNote(T.p[1],a,a+fr(bar*1.6),[v[v.length-1]],{vol:[9,9,8,8,7,7,6,6,5,5,4,4,3,3,2,2,1],duty:2,vib:{delay:8,depth:12,rate:.09}},F);
+        nesTriNote(T.t,a,a+fr(bar*.8),33+pc(song.root+chords[0][0]-9)+12,F);addN(a,'k');addN(a+2,'o');}
+      break;}
+    const kime=G.kime&&vb===3;
+    // 矩形波1：Aメロ＝分散和音、サビ＝高速アルペジオ和音
+    if(sec==='c'||(isOut&&song.ending==='fade')){for(let i=0;i<16;i++){if(keysP[i]==='.')continue;if(kime&&i>=8)continue;let j=i+1;while(j<16&&keysP[j]==='.')j++;
+        nesPulseNote(T.p[0],fr(stepT(b,i)),fr(stepT(b,j))-1,vs[ci(i)],P1c,F);}}
+    else{for(let i=0;i<16;i+=2){if(kime&&i>=8)continue;const v=vs[ci(i)],seq=v.concat(v.slice(1,-1).reverse());const m=seq[arpI++%seq.length];
+        const a=fr(stepT(b,i)),e=fr(stepT(b,i+2))-1;nesPulseNote(T.p[0],a,e,[m],P1v,F);if(!isIntro)nesPulseNote(T.p[1],a+echoD,e+echoD,[m],P2e,F);}}
+    // 矩形波2：サビは対旋律（和音の最上音を伸ばす・ビブラート）
+    if(sec==='c'||(isOut&&song.ending==='fade'))chords.forEach((c,k)=>{const a=fr((b*16+k*(16/chords.length))*s16),e=fr((b*16+(k+1)*(16/chords.length))*s16)-1;const v=vs[k];nesPulseNote(T.p[1],a,e,[v[v.length-1]],P2c,F);});
+    // 三角波：ベース
+    if(!isIntro){const p=G.bass.p;for(let i=0;i<16;i++){const ch=p[i];if(ch==='.')continue;if(vb===3&&i>=(G.kime?8:12))continue;let j=i+1;while(j<16&&p[j]==='.')j++;
+      const c=chords[ci(i)];let m=33+pc(song.root+c[0]-9)+12;if(ch==='o')m+=12;if(ch==='5')m+=7;if(ch==='3')m+=QUAL[c[1]][1];
+      if(ch==='p'){const nc=barChords(song,b+1)[0];m=33+pc(song.root+nc[0]-9)+11;}
+      nesTriNote(T.t,fr(stepT(b,i)),fr(stepT(b,j))-1,m,F);}}
+    // ノイズ：ドラム
+    const pat=isIntro?(G.noIntroDrums?{}:{h:G.drums.v.h,sh:G.drums.v.sh,o:b===song.intro-1?G.drums.v.o:null}):G.drums[sec==='i'?'v':sec]||G.drums.c;
+    for(const key in pat){const p=pat[key];if(!p||!NES_DRUM[key])continue;for(let i=0;i<16;i++){const ch=p[i];if(ch==='.')continue;
+      if(vb===3&&((G.kime&&i>=8)||(i>=12&&'kcs'.includes(key))))continue;if(vb===BARS-1&&i>=12&&'sc'.includes(key))continue;
+      const f=fr(stepT(b,i));if(ch==='r'){addN(f,key,.8);addN(fr(stepT(b,i)+s16/2),key,.6);}else addN(f,key,ch==='g'?.55:1);}}
+    if(vb===3&&!G.kime)for(let i=8;i<16;i+=(i<12?2:1))addN(fr(stepT(b,i)),'s',.5+(i-8)*.07);
+    if(kime)[8,11,14].forEach(i=>{const a=fr(stepT(b,i));nesPulseNote(T.p[0],a,a+fr(1.5*s16),vs[vs.length-1],P1c,F);nesPulseNote(T.p[1],a,a+fr(1.5*s16),[vs[vs.length-1].slice(-1)[0]],P2c,F);
+      nesTriNote(T.t,a,a+fr(1.4*s16),33+pc(song.root+chords[chords.length-1][0]-9)+12,F);addN(a,i===11?'s':'k');});
+    if(vb===BARS-1&&song.ending!=='fade')for(let i=12;i<16;i++)addN(fr(stepT(b,i)),i%2?'tm':'s',.8);
+    if(vb===0||vb===4||(song.loop&&b===0))addN(fr(b*bar),'cr');
+  }
+  // ノイズは1チャンネル：優先度の高い音が鳴り始めたら上書き
+  noiseHits.sort((a,b)=>a.f-b.f);let cur=-1;
+  for(const h of noiseHits){if(h.key==='cr'){if(T.n.vol[h.f]===0||cur<3){const v=[];for(let k=0;k<40;k++)v.push(11*(1-k/40));nesNoise(T.n,h.f,3,0,v,F);}continue;}
+    const [per,mode,vols]=NES_DRUM[h.key];const pri=NES_PRI[h.key];const busy=T.n.vol[h.f]>0&&cur>pri&&h.f-(T.n._last||0)<3;if(busy)continue;
+    nesNoise(T.n,h.f,per,mode,vols,F,h.scale);cur=pri;T.n._last=h.f;
+    if(h.key==='k'){const base=T.t.on[h.f+3]?T.t.tim[h.f+3]:0;[[64,1],[55,1],[45,1],[36,1]].forEach(([m],k)=>{T.t.on[h.f+k]=1;T.t.tim[h.f+k]=triTimer(mtof(m-k*3));});}}
+  // フェードアウト（4bit音量なので段階的に下がる）
+  for(let f=fadeStart;f<F;f++){const g=f>=fadeEnd?0:1-(f-fadeStart)/(fadeEnd-fadeStart);for(const ch of [T.p[0],T.p[1],T.n])ch.vol[f]=Math.round(ch.vol[f]*g);if(g<.15)T.t.on[f]=0;}
+  return T;
+}
+// APUを8倍オーバーサンプリングで回し、非線形ミキサー→ボックス平均→ファミコンの37Hzハイパス
+function renderAPU(T,sr,len){
+  const OS=8,dt=1/(sr*OS),out=new Float32Array(len),FR=NES.FR,F=T.t.on.length,D=NES.DUTY;
+  let ph0=0,ph1=0,tph=0,tri=15,lfsr=1,nacc=0,lastF=-1;
+  let v0=0,v1=0,f0=0,f1=0,d0=D[0],d1=D[0],ok0=false,ok1=false,ton=0,tf=0,nv=0,nr=0,nm=0;
+  const hpA=Math.exp(-2*Math.PI*37/sr);let hpX=0,hpY=0;const lpA=Math.exp(-2*Math.PI*14000/sr);let lp=0;
+  const PT=new Float32Array(31);for(let p=1;p<31;p++)PT[p]=95.88/(8128/p+100);
+  for(let i=0;i<len;i++){const f=Math.min(F-1,Math.floor(i/sr*FR));
+    if(f!==lastF){lastF=f;const P0=T.p[0],P1=T.p[1];v0=P0.vol[f];v1=P1.vol[f];ok0=v0>0&&P0.tim[f]>=8;ok1=v1>0&&P1.tim[f]>=8;
+      f0=8*NES.CPU/(16*(P0.tim[f]+1))*dt;f1=8*NES.CPU/(16*(P1.tim[f]+1))*dt;d0=D[P0.duty[f]];d1=D[P1.duty[f]];
+      ton=T.t.on[f]&&T.t.tim[f]>=2;tf=NES.CPU/(T.t.tim[f]+1)*dt;nv=T.n.vol[f];nr=NES.CPU/NES.NOISE[T.n.per[f]]*dt;nm=T.n.mode[f];}
+    let acc=0;
+    for(let o=0;o<OS;o++){let p=0;
+      ph0+=f0;if(ph0>=8)ph0-=8;if(ph0>=8)ph0%=8;if(ok0&&d0[ph0|0])p+=v0;
+      ph1+=f1;if(ph1>=8)ph1-=8;if(ph1>=8)ph1%=8;if(ok1&&d1[ph1|0])p+=v1;
+      if(ton){tph+=tf;if(tph>=32)tph%=32;tri=NES.TRI[tph|0];}
+      nacc+=nr;while(nacc>=1){nacc-=1;const fb=(lfsr&1)^((nm?(lfsr>>6):(lfsr>>1))&1);lfsr=(lfsr>>1)|(fb<<14);}
+      const nz=(nv&&!(lfsr&1))?nv:0,tn=tri/8227+nz/12241;
+      acc+=PT[p]+(tn?159.79/(1/tn+100):0);}
+    const x=acc/OS;hpY=hpA*(hpY+x-hpX);hpX=x;lp=lp*lpA+hpY*(1-lpA);out[i]=lp;}
+  return out;}
+function nesBuffer(ctx,song,opt,len){const sr=ctx.sampleRate,T=buildNES(song,opt),d=renderAPU(T,sr,len);
+  let pk=0;for(let i=0;i<d.length;i++)pk=Math.max(pk,Math.abs(d[i]));const g=pk>0?(opt.guide?.6:.9)/pk:1;
+  const b=ctx.createBuffer(2,len,sr);const L=b.getChannelData(0),R=b.getChannelData(1);for(let i=0;i<len;i++){L[i]=d[i]*g;R[i]=L[i];}return b;}
 
 /* ============ 基本ユーティリティ ============ */
 const $=s=>document.querySelector(s);
@@ -980,7 +1092,7 @@ function wavBlob(buf){const ch=buf.numberOfChannels,n=buf.length,sr=buf.sampleRa
   return new Blob([ab],{type:'audio/wav'});}
 
 /* ============ アプリ状態 ============ */
-const state={genre:'kawaii',diff:'easy',range:'mid',endMode:'loop',song:null,lyricMap:[],lines:[],
+const state={famicom:false,genre:'kawaii',diff:'easy',range:'mid',endMode:'loop',song:null,lyricMap:[],lines:[],
   backingBuf:null,guideBuf:null,rendering:false,raw:null,rawStart:0,track:null,corrected:null,mixBuf:null,
   videoBlob:null,videoExt:'webm',live:[],inArtifact:!!(window.claude&&window.claude.use)};
 let actx=null;
@@ -998,13 +1110,15 @@ chipRow($('#rangeChips'),Object.entries(RANGES).map(([k,r])=>[k,r.name]),'range'
 chipRow($('#endChips'),[['loop','🔁 ループ（頭に戻る）'],['ending','🎬 エンディングあり']],'endMode');
 
 let genJob=0;
+function songInfo(){const s=state.song,G=GENRES[s.genre];
+  $('#songInfo').innerHTML=`${s.famicom?'🎮 <b>ファミコン音源</b>　':''}${G.emoji} <b>${G.name}</b>（${G.tag}）<br>キー <b>${NOTE_NAMES[pc(s.root+(s.minor?9:0))]}${s.minor?'m':''}</b>　テンポ <b>${s.bpm}</b>　長さ 約<b>${Math.round(playLen(s))}</b>秒　終わり方 <b>${{loop:'🔁 ループ',ring:'余韻で終わる',stab:'ジャン！で決める',fade:'フェードアウト'}[s.ending]}</b><br>コード <b>${chordNamesOf(s).join(' → ')}</b>`;}
 async function newSong(){
   stopAll();const job=++genJob;
-  state.song=generateSong(state.genre,state.diff,state.range,state.endMode);
+  state.song=generateSong(state.genre,state.diff,state.range,state.endMode);state.song.famicom=state.famicom;
   Object.assign(state,{backingBuf:null,guideBuf:null,raw:null,track:null,corrected:null,mixBuf:null,live:[],videoBlob:null});
   $('#vprev').style.display='none';$('#vwrap').style.display='none';
   const s=state.song,G=GENRES[s.genre];
-  $('#songInfo').innerHTML=`${G.emoji} <b>${G.name}</b>（${G.tag}）<br>キー <b>${NOTE_NAMES[pc(s.root+(s.minor?9:0))]}${s.minor?'m':''}</b>　テンポ <b>${s.bpm}</b>　長さ 約<b>${Math.round(playLen(s))}</b>秒　終わり方 <b>${{loop:'🔁 ループ',ring:'余韻で終わる',stab:'ジャン！で決める',fade:'フェードアウト'}[s.ending]}</b><br>コード <b>${chordNamesOf(s).join(' → ')}</b>`;
+  songInfo();
   $('#recStatus').textContent='';$('#mixStatus').textContent='';$('#vidStatus').textContent='';
   updateLyrics();drawRoll(null);updateKara(null);
   await renderCurrent(job);
@@ -1015,6 +1129,9 @@ async function renderCurrent(job=genJob){
   try{
     const c=getCtx(),sr=c.sampleRate,L=Math.round(loopLen(s)*sr),len=s.loop?L+TAIL*sr:Math.ceil(songDur(s)*sr);
     await new Promise(r=>setTimeout(r,20));
+    if(s.famicom){let bb=nesBuffer(c,s,{backing:true},len);await new Promise(r=>setTimeout(r,0));let gb=nesBuffer(c,s,{guide:true},len);
+      if(s.loop){bb=foldLoop(c,bb,L);gb=foldLoop(c,gb,L);}if(job!==genJob)return;
+      state.backingBuf=bb;state.guideBuf=gb;$('#genStatus').textContent='できました！（🎮 ファミコン音源）';if(state.raw)analyzeAndMix(false);state.rendering=false;setReady();return;}
     const oc=offlineCtx(2,len,sr);await loadSynth(oc);scheduleSong(oc,oc.destination,s,0,{backing:1});let bb=await renderOffline(oc);if(job!==genJob)return;
     const og=offlineCtx(2,len,sr);await loadSynth(og);scheduleSong(og,og.destination,s,0,{backing:0,guide:1});let gb=await renderOffline(og);if(job!==genJob)return;
     if(s.loop){bb=foldLoop(c,bb,L);gb=foldLoop(c,gb,L);}
@@ -1024,6 +1141,7 @@ async function renderCurrent(job=genJob){
   state.rendering=false;setReady();
 }
 $('#genBtn').onclick=()=>newSong();
+$('#famicom').onchange=e=>{state.famicom=e.target.checked;if(state.song){state.song.famicom=state.famicom;songInfo();renderCurrent();}};
 
 
 
