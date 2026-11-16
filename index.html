@@ -1476,8 +1476,16 @@ const state={famicom:false,genre:'kawaii',progMode:'auto',diff:'kid',range:'mid'
   backingBuf:null,guideBuf:null,rendering:false,raw:null,rawStart:0,track:null,corrected:null,mixBuf:null,
   videoBlob:null,videoExt:'webm',live:[],inArtifact:!!(window.claude&&window.claude.use)};
 let actx=null;
-function getCtx(){if(!actx){const C=window.AudioContext||window.webkitAudioContext;actx=new C({latencyHint:'interactive'});}if(actx.state!=='running')actx.resume();return actx;}
+function getCtx(){if(actx&&(actx.state==='closed'||actx.state==='interrupted')){try{actx.close();}catch(e){}actx=null;}if(!actx){const C=window.AudioContext||window.webkitAudioContext;actx=new C({latencyHint:'interactive'});}if(actx.state!=='running')actx.resume();return actx;}
 let player=null;
+// スマホで音が出ない対策：iPhoneの消音スイッチ中でも鳴るよう「メディア再生」として扱わせる／録音後に受話口（小さい音）へ切り替わったままにしない
+let silentEl=null;
+function unlockAudio(recording=false){
+  try{if(navigator.audioSession)navigator.audioSession.type=recording?'play-and-record':'playback';}catch(e){}
+  if(recording)return;
+  try{if(!silentEl){const sr=22050,b={numberOfChannels:1,length:sr/2,sampleRate:sr,getChannelData:()=>new Float32Array(sr/2)};
+      silentEl=new Audio(URL.createObjectURL(wavBlob(b)));silentEl.loop=true;silentEl.setAttribute('playsinline','');silentEl.preload='auto';}
+    const p=silentEl.play();if(p&&p.catch)p.catch(()=>{});}catch(e){}}
 function stopAll(){if(player){try{player.out.gain.value=0;player.out.disconnect();}catch(e){}(player.srcs||[]).forEach(s=>{try{s.stop();}catch(e){}});player=null;}cancelAnimationFrame(anim);$('#count').style.display='none';drawRoll(null);updateKara(null);}
 
 /* ---- チップ ---- */
@@ -1592,9 +1600,13 @@ function animate(getTs,endTs,onEnd,period=0){
   cancelAnimationFrame(anim);anim=requestAnimationFrame(loop);
 }
 function playBuffers(list,lead=.12,loop=false){ // list: [[buffer,gain]]
-  const c=getCtx(),out=mkGain(c,1,c.destination),t0=c.currentTime+lead,srcs=[];
+  unlockAudio(!!rec);const c=getCtx(),out=mkGain(c,1,c.destination),t0=c.currentTime+lead,srcs=[];
   for(const [b,gv] of list){if(!b)continue;const s=c.createBufferSource();s.buffer=b;s.loop=loop;s.connect(mkGain(c,gv,out));s.start(t0);srcs.push(s);}
-  player={out,t0,srcs};return t0;
+  player={out,t0,srcs};
+  // 再生が進まない（音声エンジンが止まっている）ときは作り直して、もう一度押してもらう
+  const ct0=c.currentTime,me=player;setTimeout(()=>{if(player!==me||c.currentTime-ct0>.05)return;
+    try{c.close();}catch(e){}actx=null;stopAll();toast('音が出ませんでした。もう一度押してください（iPhoneは消音スイッチもご確認ください）');},1200);
+  return t0;
 }
 
 /* ---- 試聴 ---- */
@@ -1616,6 +1628,7 @@ $('#recBtn').onclick=async()=>{
   stopAll();const c=getCtx();
   if(!navigator.mediaDevices||!navigator.mediaDevices.getUserMedia){showFallback();return;}
   let stream;
+  unlockAudio(true);
   try{stream=await navigator.mediaDevices.getUserMedia({audio:{echoCancellation:false,noiseSuppression:false,autoGainControl:false}});}
   catch(e){showFallback(e);return;}
   await c.resume();
@@ -1634,6 +1647,7 @@ $('#recBtn').onclick=async()=>{
 function finishRecording(manual){
   const r=rec;if(!r||r.stopped)return;r.stopped=true;rec=null;
   try{r.proc.disconnect();r.src.disconnect();r.stream.getTracks().forEach(t=>t.stop());}catch(e){}
+  try{if(navigator.audioSession)navigator.audioSession.type='playback';}catch(e){}
   stopAll();$('#recBtn').textContent='● もう一度録音';
   const len=r.chunks.reduce((a,b)=>a+b.length,0);if(len<getCtx().sampleRate){$('#recStatus').textContent='録音が短すぎました。もう一度どうぞ。';state.live=[];drawRoll(null);return;}
   const raw=new Float32Array(len);let o=0;for(const ch of r.chunks){raw.set(ch,o);o+=ch.length;}
