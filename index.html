@@ -141,6 +141,9 @@ input[type=range]{width:100%;accent-color:var(--accent);height:28px}
   <h2>仕上げる</h2>
   <div class="sl"><div class="top"><span>音程補正</span><b id="corrV">70%</b></div><input type="range" id="corr" min="0" max="100" value="70"></div>
   <div class="tog"><span>ケロケロ（ロボ声）</span><label class="sw"><input type="checkbox" id="hard"><span></span></label></div>
+  <div class="label" style="margin-top:12px">🎛 ヴィンテージコンプ <small style="color:var(--sub)">（1176風：声とミックスに真空管時代の質感）</small></div>
+  <div class="chips" id="compChips"></div>
+  <div class="sl" id="compAmtRow"><div class="top"><span>かかり具合</span><b id="compAmtV">50</b></div><input type="range" id="compAmt" min="0" max="100" value="50"></div>
   <div class="tog"><span>ガイドメロディを残す <small style="color:var(--sub)">（オフ＝補正した声だけで仕上げ）</small></span><label class="sw"><input type="checkbox" id="keepGuide"><span></span></label></div>
   <div class="sl"><div class="top"><span>エコー</span><b id="echoV">25</b></div><input type="range" id="echo" min="0" max="100" value="25"></div>
   <div class="sl"><div class="top"><span>リバーブ（響き）</span><b id="revV">35</b></div><input type="range" id="rev" min="0" max="100" value="35"></div>
@@ -1876,8 +1879,52 @@ function cancelBacking(mic,ref,sr){
   let h=null;for(let it=0;it<3;it++)h=estimatePath(mic,r2,4096,8192,h);
   const y=convolveFFT(r2,h,n),e=new Float32Array(n);for(let i=0;i<n;i++)e[i]=mic[i]-y[i];
   return {voice:residualSuppress(e,y,sr,1,.2),delaySec:delay/sr,conf};}
+/* ============ ヴィンテージ・コンプ（UREI 1176 風 FET コンプレッサー） ============
+   入力トランス（低域の飽和）→ FET ゲインセル（超高速アタック、曲の流れで変わるリリース、
+   圧縮量に応じて増える偶数・奇数倍音）→ クラスA出力アンプ（非対称のソフトクリップ）→ 出力トランス
+   モード：4:1（ナチュラル）／8:1（パンチ）／全押し（ALL BUTTONS：深くつぶれて独特の歪みと揺れ） */
+const FET_MODES={
+  natural:{name:'ナチュラル（4:1）',ratio:4,knee:7,atk:.0004,rel:.28,dist:.6,allb:false},
+  punch:{name:'パンチ（8:1）',ratio:8,knee:5,atk:.00012,rel:.12,dist:1,allb:false},
+  all:{name:'全押し（ALL）',ratio:30,knee:2,atk:.00006,rel:.07,dist:2.4,allb:true}};
+// x: チャンネル配列（1〜2本）。amount 0〜1：かかり具合。mix：原音との混ぜ具合（並列コンプ）
+function fet1176(chs,sr,mode,amount,mix=1){const M=FET_MODES[mode];if(!M)return chs;const n=chs[0].length,C=chs.length;
+  // 入力の大きさを揃えてから「入力つまみ」で突っ込む（素材の音量に左右されない）
+  let q=0,cnt=0;for(let i=0;i<n;i+=2){let a=0;for(const ch of chs)a=Math.max(a,Math.abs(ch[i]));if(a>.003){q+=a*a;cnt++;}}
+  const rms=Math.sqrt(q/Math.max(1,cnt))||1e-3,pre=.12/rms;                       // 平均を約-18dBFSに
+  const T=-12-amount*24,R=M.ratio,K=M.knee;                                        // しきい値は「かかり具合」で下げる
+  const aC=1-Math.exp(-1/(M.atk*sr)),rF=1-Math.exp(-1/(M.rel*sr)),rS=1-Math.exp(-1/(M.rel*6*sr));
+  const out=chs.map(()=>new Float32Array(n));
+  const lfA=1-Math.exp(-2*Math.PI*120/sr),hfA=1-Math.exp(-2*Math.PI*17000/sr),hpA=Math.exp(-2*Math.PI*12/sr);
+  const LA=Math.round(sr*.0004); // 0.4msだけ先読みして、立ち上がりの「飛び出し」を抑える
+  const pass=(mkLin,write)=>{const st=chs.map(()=>({lfI:0,lfO:0,hp:0,hpx:0,lp:0}));let gr=0,slow=0,prevOut=0,sum=0,cnt=0;
+    for(let i=0;i<n;i++){
+      // 検出：1176はフィードバック型（出力側を見る）＋入力も見て立ち上がりを捕まえる
+      let pk=0,pn=0;const ia=Math.min(n-1,i+LA);for(let c=0;c<C;c++){pk=Math.max(pk,Math.abs(chs[c][ia]*pre));pn=Math.max(pn,Math.abs(chs[c][i]*pre));}
+      const det=Math.max(pk*.85,prevOut);const lv=8.685889638*Math.log(det+1e-9),ov=lv-T;
+      let tgt=ov<=-K/2?0:ov>=K/2?ov*(1-1/R):(1-1/R)*(ov+K/2)*(ov+K/2)/(2*K);
+      if(M.allb)tgt*=1.25+.15*Math.min(1,ov/12); // 全押し：バイアスがずれて、より深く・荒く
+      if(tgt>30)tgt=30;
+      if(tgt>gr)gr+=(tgt-gr)*aC;else{const r=rF*(1-slow)+rS*slow;gr+=(tgt-gr)*r;}    // 長く圧縮が続くほどリリースが遅くなる
+      slow+=((gr>3?1:0)-slow)*(1/(sr*.8));
+      const g=Math.exp(-gr*.1151292546);prevOut=pn*g;if(pn>.003*pre){sum+=gr;cnt++;}
+      if(!write)continue;const grN=Math.min(1,gr/20);
+      for(let c=0;c<C;c++){const S=st[c];let x=chs[c][i]*pre;
+        S.lfI+=(x-S.lfI)*lfA;x+=.18*(Math.tanh(S.lfI*2.2)/2.2-S.lfI);               // 入力トランスの低域飽和
+        let y=x*g*mkLin;                                                              // 圧縮＋メイクアップ（出力段の手前）
+        y+=M.dist*(.12*grN*y*Math.abs(y)-.05*grN*y*y*y);                            // FETの歪み（つぶすほど増える）
+        y=y>=0?Math.tanh(y*1.15)/1.15:.96*Math.tanh(y*1.2)/1.2;                       // クラスA出力（非対称）：飛び出した頭もここで丸まる
+        S.lfO+=(y-S.lfO)*lfA;y+=.12*(Math.tanh(S.lfO*2)/2-S.lfO);                      // 出力トランス
+        S.lp+=(y-S.lp)*hfA;y=S.lp;
+        const hy=hpA*(S.hp+y-S.hpx);S.hpx=y;S.hp=hy;out[c][i]=hy;}}                    // 直流カット
+    return sum/Math.max(1,cnt);};
+  const avgGR=pass(1,false);pass(Math.pow(10,avgGR*.85/20),true);
+  // 最後に原音と同じくらいの音量に合わせて、原音と混ぜる
+  let qo=0,co=0;for(let i=0;i<n;i+=2){let a=0;for(const o of out)a=Math.max(a,Math.abs(o[i]));if(a>.003*pre){qo+=a*a;co++;}}
+  const mk=(rms*pre)/Math.max(1e-6,Math.sqrt(qo/Math.max(1,co)))/pre;
+  return chs.map((ch,c)=>{const o=out[c],r=new Float32Array(n);for(let i=0;i<n;i++)r[i]=ch[i]*(1-mix)+o[i]*mk*mix;return r;});}
 /* ============ アプリ状態 ============ */
-const state={famicom:false,genre:'kawaii',progMode:'auto',diff:'kid',range:'mid',endMode:'loop',song:null,lyricMap:[],lines:[],
+const state={famicom:false,genre:'kawaii',comp:'off',progMode:'auto',diff:'kid',range:'mid',endMode:'loop',song:null,lyricMap:[],lines:[],
   backingBuf:null,guideBuf:null,rendering:false,raw:null,rawStart:0,track:null,corrected:null,mixBuf:null,
   videoBlob:null,videoExt:'webm',live:[],inArtifact:!!(window.claude&&window.claude.use)};
 let actx=null;
@@ -2104,7 +2151,9 @@ async function renderMix(){
   const c=getCtx(),s=state.song,sr=c.sampleRate,L=Math.round(loopLen(s)*sr),len=s.loop?L+TAIL*sr:Math.ceil(songDur(s)*sr),oc=offlineCtx(2,len,sr);
   const master=oc.createDynamicsCompressor();master.threshold.value=-8;master.ratio.value=4;master.attack.value=.003;master.release.value=.25;
   const mg=mkGain(oc,.95,oc.destination);master.connect(mg);
-  const v=state.corrected;let peak=0;for(let i=0;i<v.length;i+=4)peak=Math.max(peak,Math.abs(v[i]));
+  let v=state.corrected;const cm=state.comp,camt=(+$('#compAmt').value)/100;
+  if(cm!=='off')v=fet1176([v],sr,cm,camt,1)[0]; // ボーカルに1176
+  let peak=0;for(let i=0;i<v.length;i+=4)peak=Math.max(peak,Math.abs(v[i]));
   const b=oc.createBufferSource();b.buffer=state.backingBuf;const bg=mkGain(oc,(+$('#back').value)/100*1.1,master);b.connect(bg);b.start(0);
   if($('#keepGuide').checked&&state.guideBuf){const gs=oc.createBufferSource();gs.buffer=state.guideBuf;gs.connect(mkGain(oc,.6,master));gs.start(0);}
   // 歌っている間だけ伴奏を少し下げる（ボーカルが前に出る）
@@ -2122,7 +2171,13 @@ async function renderMix(){
     vg.connect(mkGain(oc,echo*.55,d));d.connect(lp);lp.connect(fb);fb.connect(d);lp.connect(mkPan(oc,-.3,master));}
   const rv=(+$('#rev').value)/100;if(rv>0){const cv=oc.createConvolver();cv.buffer=reverbIR(oc);vg.connect(mkGain(oc,rv*.9,cv));cv.connect(master);}
   const al=alignStart();if(al>=0)src.start(0,al);else src.start(-al,0);
-  const out=await renderOffline(oc);return s.loop?foldLoop(c,out,L):out;
+  const out=await renderOffline(oc);
+  if(cm!=='off'){// ミックス全体にも薄く（並列）通して質感を足す
+    const chs=[];for(let k=0;k<out.numberOfChannels;k++)chs.push(out.getChannelData(k));const r=fet1176(chs,sr,cm,camt*.55,cm==='all'?.45:.35);
+    r.forEach((a,k)=>out.getChannelData(k).set(a));}
+  // 仕上げのセーフティ：0dBを超えそうな所だけやわらかく丸める（音割れ防止）
+  for(let k=0;k<out.numberOfChannels;k++){const d=out.getChannelData(k);for(let i=0;i<d.length;i++){const x=d[i],ax=Math.abs(x);if(ax>.8)d[i]=Math.sign(x)*(.8+.18*Math.tanh((ax-.8)/.18));}}
+  return s.loop?foldLoop(c,out,L):out;
 }
 function playMix(){
   if(!state.mixBuf)return;stopAll();const s=state.song,c=getCtx(),t0=playBuffers([[state.mixBuf,1]],.08,s.loop);
@@ -2133,6 +2188,12 @@ const bindSlider=(id,lbl,fmt)=>{const el=$('#'+id);let t=0;el.oninput=()=>{$('#'
 bindSlider('corr','corrV',v=>v+'%');bindSlider('echo','echoV',v=>v);bindSlider('rev','revV',v=>v);bindSlider('voc','vocV',v=>v);bindSlider('back','backV',v=>v);bindSlider('lat','latV',v=>v+'ms');
 $('#hard').onchange=()=>{if(state.raw)analyzeAndMix(false);};
 $('#keepGuide').onchange=()=>{if(state.raw)analyzeAndMix(false);};
+// ヴィンテージコンプの選択（曲は作り直さず、仕上げだけやり直す）
+(()=>{const el=$('#compChips');const items=[['off','オフ'],...Object.entries(FET_MODES).map(([k,m])=>[k,m.name])];
+  for(const [k,lab] of items){const b=document.createElement('button');b.className='chip'+(state.comp===k?' on':'');b.textContent=lab;b.dataset.k=k;
+    b.onclick=()=>{state.comp=k;el.querySelectorAll('.chip').forEach(c=>c.classList.toggle('on',c.dataset.k===k));$('#compAmtRow').style.opacity=k==='off'?.4:1;if(state.raw)analyzeAndMix(false);};el.appendChild(b);}
+  $('#compAmtRow').style.opacity=.4;})();
+bindSlider('compAmt','compAmtV',v=>v);
 
 function setReady(){const has=!!state.mixBuf,ready=!!state.backingBuf;
   $('#playBtn').disabled=!ready;$('#recBtn').disabled=!ready&&!rec;$('#demoBtn').disabled=!ready;$('#genBtn').disabled=false;
