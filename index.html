@@ -83,6 +83,8 @@ input[type=range]{width:100%;accent-color:var(--accent);height:28px}
   <div class="chips" id="jpChips"></div>
   <div class="label">洋楽トレンド</div>
   <div class="chips" id="wChips"></div>
+  <div class="label">コード進行</div>
+  <div class="chips" id="progChips"></div>
   <div class="label">メロディの難しさ</div>
   <div class="chips" id="diffChips"></div>
   <div class="label">声の高さ</div>
@@ -121,6 +123,7 @@ input[type=range]{width:100%;accent-color:var(--accent);height:28px}
   <div class="step">STEP 4</div>
   <h2>歌って録音</h2>
   <div class="note">🎧 イヤホン推奨（有線がおすすめ）。イントロのカウント「4・3・2・1」のあとに歌い始めます。</div>
+  <div class="tog"><span>🔊 スピーカーで歌う <small style="color:var(--sub)">（イヤホンなし：録音後に伴奏の音を自動で消します）</small></span><label class="sw"><input type="checkbox" id="spkMode"><span></span></label></div>
   <div class="sl"><div class="top"><span>ガイドメロディの音量</span><b id="guideV">70</b></div><input type="range" id="guideVol" min="0" max="100" value="70"></div>
   <button class="btn rec" id="recBtn">● 録音スタート</button>
   <div class="status" id="recStatus"></div>
@@ -552,6 +555,16 @@ const PROG={
   bandA:[[[5,'add9']],[[7,'maj']],[[9,'m7']],[[0,'maj']]],
   bandB:[[[9,'m7']],[[5,'maj7']],[[7,'maj']],[[0,'add9']]],
   komuro:[[[9,'min']],[[5,'maj']],[[7,'maj']],[[0,'maj']]],
+  km2:[[[9,'m7']],[[5,'maj7']],[[7,'maj']],[[0,'add9']]],
+  km3:[[[9,'min']],[[5,'maj']],[[7,'maj']],[[4,'min']]],
+  km4:[[[9,'min']],[[5,'maj']],[[7,'maj']],[[4,'7']]],
+  km5:[[[9,'m7']],[[5,'maj7']],[[7,'7sus4'],[7,'maj']],[[0,'maj']]],
+  km6:[[[9,'min']],[[5,'maj']],[[7,'maj']],[[0,'maj'],[4,'7']]],
+  km7:[[[9,'m9']],[[5,'maj9']],[[7,'sus4'],[7,'maj']],[[0,'add9']]],
+  ms3:[[[5,'maj7']],[[4,'7']],[[9,'m7']],[[0,'7']]],
+  ms4:[[[2,'m7']],[[4,'7']],[[9,'m7']],[[7,'m7'],[0,'7']]],
+  ms5:[[[5,'maj7'],[4,'7']],[[9,'m7'],[0,'7']],[[5,'maj7'],[4,'7b9']],[[9,'m9'],[0,'9']]],
+  ms6:[[[5,'maj9']],[[4,'7b9']],[[9,'m7']],[[9,'m7'],[0,'7']]],
   drockA:[[[9,'m7']],[[5,'maj7']],[[7,'maj']],[[9,'m7']]],
   drockB:[[[2,'m7']],[[9,'m7']],[[5,'maj7']],[[7,'maj']]],
   city1:[[[2,'m9']],[[7,'7']],[[0,'maj9']],[[9,'m9']]],
@@ -690,6 +703,8 @@ const GENRES={
     drums:{v:{k:'x.......x.x.....',rm:'....x.......x...',h:'x.x.x.x.x.x.x.x.'},c:{k:'x.....x.x.x.....',s:'....x.......x...',h:'xgxgxgxgxgxgxgxg',sh:'..x...x...x...x.'}},
     colors:['#22302b','#6b8f71','#f3e3c3'],tag:'宅録っぽいゆるさ'}
 };
+// コード進行モード（ジャンルに関係なく、この系統の進行と派生からランダム）
+const PROG_MODES={komuro:{name:'小室進行',progs:['komuro','km2','km3','km4','km5','km6','km7']},marusa:{name:'丸サ進行',progs:['marusa','jt9','jtPass','ms3','ms4','ms5','ms6']}};
 const DIFF={
   kid:{name:'やさしい',span:7,maxLeap:4,stepBias:3,cells:[[4,4,4,4],[4,4,8]],ends:[[4,4,8]]},
   easy:{name:'かんたん',span:7,maxLeap:4,stepBias:3,
@@ -955,12 +970,12 @@ function genKidMelody(sk,G){
   const vs=makeShape(vBase,I),cs=makeShape(cBase,I+64);
   phrase(0,vs,I,'open');phrase(1,vs,I+32,'tonic');phrase(2,cs,I+64,'open');phrase(3,cs,I+96,'tonic');
   return notes;}
-function generateSong(gKey,diffKey,rangeKey,endMode='loop'){
+function generateSong(gKey,diffKey,rangeKey,endMode='loop',progMode='auto'){
   const G=GENRES[gKey],D=DIFF[diffKey],R=RANGES[rangeKey];
   const loop=endMode!=='ending',ending=loop?'loop':pick(['ring','stab','fade']);
-  const bpm=ri(G.bpm[0],G.bpm[1]),root=ri(0,11),progKey=pick(G.progs),prog=PROG[progKey],intro=bpm>=135?2:1;
+  const bpm=ri(G.bpm[0],G.bpm[1]),root=ri(0,11),progKey=pick(progMode&&PROG_MODES[progMode]?PROG_MODES[progMode].progs:G.progs),prog=PROG[progKey],intro=bpm>=135?2:1;
   const lo=R.center-Math.floor(D.span/2)+((MEL_STYLE[gKey]||{}).shift||0),hi=lo+D.span;
-  const s={genre:gKey,diff:diffKey,range:rangeKey,bpm,root,progKey,prog,intro,minor:!!G.minor,loop,ending,lo,hi,s16:60/bpm/4,mel:MEL_STYLE[gKey]||MEL_STYLE.band,notes:[]};
+  const s={progMode,genre:gKey,diff:diffKey,range:rangeKey,bpm,root,progKey,prog,intro,minor:!!G.minor,loop,ending,lo,hi,s16:60/bpm/4,mel:MEL_STYLE[gKey]||MEL_STYLE.band,notes:[]};
   let notes=diffKey==='kid'?genKidMelody(s,G):genMelody(s,G,D,R,diffKey);
   // 半小節でコードが変わる所をまたぐ長い音は、後半のコードに合わせて2音に分ける（食いは除く）
   for(let i=0;i<notes.length;i++){const n=notes[i],nb=Math.floor(n.start/8)*8+8;if(n.start+n.dur<=nb||nb-n.start<=2)continue;
@@ -1391,8 +1406,73 @@ function wavBlob(buf){const ch=buf.numberOfChannels,n=buf.length,sr=buf.sampleRa
   for(let i=0;i<n;i++)for(let c=0;c<ch;c++){const s=clamp(cs[c][i],-1,1);v.setInt16(o,s<0?s*0x8000:s*0x7fff,true);o+=2;}
   return new Blob([ab],{type:'audio/wav'});}
 
+/* ============ スピーカー録音用：伴奏の消し込み（録音後のエコーキャンセル） ============
+   再生した音（伴奏＋ガイド）は全部わかっているので、それを「参照信号」にして
+   ①遅れ（スピーカー→マイク）を相互相関で測る → ②録音全体から部屋・スピーカーの響き（伝達特性）を推定して
+   再生音に掛けて引き算 → ③残った伴奏をスペクトル上で抑える、の3段で声だけ残す。 */
+const FFTC=new Map();
+function fftTw(n){let t=FFTC.get(n);if(t)return t;const c=new Float64Array(n/2),s=new Float64Array(n/2),rv=new Uint32Array(n);
+  for(let i=0;i<n/2;i++){c[i]=Math.cos(2*Math.PI*i/n);s[i]=-Math.sin(2*Math.PI*i/n);}
+  const bits=Math.log2(n);for(let i=0;i<n;i++){let r=0;for(let b=0;b<bits;b++)r|=((i>>b)&1)<<(bits-1-b);rv[i]=r;}
+  t={c,s,rv};FFTC.set(n,t);return t;}
+function fft(re,im,inv=false){const n=re.length,{c,s,rv}=fftTw(n);
+  for(let i=0;i<n;i++){const j=rv[i];if(j>i){let t=re[i];re[i]=re[j];re[j]=t;t=im[i];im[i]=im[j];im[j]=t;}}
+  for(let size=2;size<=n;size<<=1){const h=size>>1,st=n/size;
+    for(let i=0;i<n;i+=size)for(let j=0,k=0;j<h;j++,k+=st){const wr=c[k],wi=inv?-s[k]:s[k],a=i+j,b=a+h;
+      const tr=re[b]*wr-im[b]*wi,ti=re[b]*wi+im[b]*wr;re[b]=re[a]-tr;im[b]=im[a]-ti;re[a]+=tr;im[a]+=ti;}}
+  if(inv)for(let i=0;i<n;i++){re[i]/=n;im[i]/=n;}}
+// ① スピーカー→マイクの遅れ（サンプル）を、PHAT重み付き相互相関で推定
+function echoDelay(mic,ref,sr,maxSec=.7){const D=4,n0=Math.min(mic.length,ref.length);
+  // いちばん伴奏が鳴っている12秒ぐらいを使う
+  const seg=Math.min(Math.floor(n0/D),1<<Math.ceil(Math.log2(sr*12/D)));let N=1;while(N<seg*2)N<<=1;
+  const a=new Float64Array(N),ai=new Float64Array(N),b=new Float64Array(N),bi=new Float64Array(N);
+  for(let i=0;i<seg;i++){let x=0,y=0;for(let k=0;k<D;k++){const j=i*D+k;if(j<n0){x+=mic[j];y+=ref[j];}}a[i]=x;b[i]=y;}
+  fft(a,ai);fft(b,bi);
+  for(let i=0;i<N;i++){const r=a[i]*b[i]+ai[i]*bi[i],m=ai[i]*b[i]-a[i]*bi[i],mag=Math.hypot(r,m)+1e-9;a[i]=r/mag;ai[i]=m/mag;}
+  fft(a,ai,true);const maxL=Math.min(N/2-1,Math.floor(maxSec*sr/D));let best=0,bv=-1e9,sum=0;
+  for(let l=0;l<=maxL;l++){sum+=Math.abs(a[l]);if(a[l]>bv){bv=a[l];best=l;}}
+  const conf=bv/(sum/(maxL+1)+1e-9);
+  // 細かく：元のサンプルレートで前後Dサンプルを直接相関
+  let fb=best*D,fv=-1e9;for(let l=Math.max(0,best*D-D);l<=best*D+D;l++){let x=0;for(let i=0;i+l<n0&&i<sr*6;i+=2)x+=mic[i+l]*ref[i];if(x>fv){fv=x;fb=l;}}
+  return {delay:fb,conf};}
+// ②' オフライン用：録音全体で「再生音→マイク」の伝達特性を平均して求める（声は再生音と無相関なので平均で消える）
+function estimatePath(mic,ref,L=4096,N=16384,hPrev=null){const H=N/2,n=Math.min(mic.length,ref.length),Sr=new Float64Array(N),Si=new Float64Array(N),Sxx=new Float64Array(N);
+  const win=new Float64Array(N);for(let i=0;i<N;i++)win[i]=.5-.5*Math.cos(2*Math.PI*i/N);
+  const ar=new Float64Array(N),ai=new Float64Array(N),br=new Float64Array(N),bi=new Float64Array(N);
+  // 2回目以降：前の推定で引き算した残り（≒声）が大きい区間ほど軽く扱う（声で推定がぶれないように）
+  const res=hPrev?(()=>{const y=convolveFFT(ref,hPrev,n),r=new Float32Array(n);for(let i=0;i<n;i++)r[i]=mic[i]-y[i];return r;})():null;
+  for(let o=0;o+N<=n;o+=H){let ex=0,rv=0;for(let i=0;i<N;i++){const w=win[i];ar[i]=mic[o+i]*w;br[i]=ref[o+i]*w;ai[i]=0;bi[i]=0;ex+=ref[o+i]*ref[o+i];if(res)rv+=res[o+i]*res[o+i];}if(ex<1e-6)continue;
+    const fw=res?1/(rv/N+1e-7):1;
+    fft(ar,ai);fft(br,bi);for(let k=0;k<N;k++){Sr[k]+=fw*(ar[k]*br[k]+ai[k]*bi[k]);Si[k]+=fw*(ai[k]*br[k]-ar[k]*bi[k]);Sxx[k]+=fw*(br[k]*br[k]+bi[k]*bi[k]);}}
+  let mx=0;for(let k=0;k<N;k++)mx=Math.max(mx,Sxx[k]);const reg=mx*1e-5;
+  const hr=new Float64Array(N),hi=new Float64Array(N);for(let k=0;k<N;k++){hr[k]=Sr[k]/(Sxx[k]+reg);hi[k]=Si[k]/(Sxx[k]+reg);}
+  fft(hr,hi,true);const h=new Float32Array(L);for(let i=0;i<L;i++){const t=i/L;h[i]=hr[i]*(t<.75?1:.5+.5*Math.cos(Math.PI*(t-.75)/.25));}return h;}
+function convolveFFT(x,h,n){const L=h.length;let N=1;while(N<2*L)N<<=1;const B=N-L+1,y=new Float32Array(n);
+  const hr=new Float64Array(N),hi=new Float64Array(N);hr.set(h);fft(hr,hi);const xr=new Float64Array(N),xi=new Float64Array(N);
+  for(let o=0;o<n;o+=B){xr.fill(0);xi.fill(0);for(let i=0;i<B&&o+i<x.length;i++)xr[i]=x[o+i];fft(xr,xi);
+    for(let k=0;k<N;k++){const r=xr[k]*hr[k]-xi[k]*hi[k],m=xr[k]*hi[k]+xi[k]*hr[k];xr[k]=r;xi[k]=m;}fft(xr,xi,true);
+    for(let i=0;i<N&&o+i<n;i++)y[o+i]+=xr[i];}return y;}
+// ③ 残った伴奏をスペクトル上で抑える（推定エコーより十分大きい成分＝声だけ残す）
+function residualSuppress(e,y,sr,alpha=1.6,floor=.12){const N=1024,H=256,n=e.length,out=new Float32Array(n),win=new Float64Array(N);
+  for(let i=0;i<N;i++)win[i]=Math.sqrt(.5-.5*Math.cos(2*Math.PI*i/N));
+  const G=new Float64Array(N/2+1).fill(1),er=new Float64Array(N),ei=new Float64Array(N),yr=new Float64Array(N),yi=new Float64Array(N);let norm=0;for(let i=0;i<N;i+=H)norm+=win[i]*win[i];
+  for(let o=-N+H;o<n;o+=H){for(let i=0;i<N;i++){const j=o+i,w=win[i];er[i]=j>=0&&j<n?e[j]*w:0;yr[i]=j>=0&&j<n?y[j]*w:0;ei[i]=0;yi[i]=0;}
+    fft(er,ei);fft(yr,yi);
+    for(let k=0;k<=N/2;k++){const pe=er[k]*er[k]+ei[k]*ei[k],py=yr[k]*yr[k]+yi[k]*yi[k];let g=1-alpha*py/(pe+1e-12);g=g<floor?floor:g;
+      const gs=g>G[k]?.6*g+.4*G[k]:.25*g+.75*G[k];G[k]=gs; // 立ち上がりは速く、下がる時はゆっくり（声の頭を削らない）
+      er[k]*=gs;ei[k]*=gs;if(k>0&&k<N/2){er[N-k]*=gs;ei[N-k]*=gs;}}
+    fft(er,ei,true);for(let i=0;i<N;i++){const j=o+i;if(j>=0&&j<n)out[j]+=er[i]*win[i]/norm;}}
+  return out;}
+// まとめ：mic＝録音、ref＝同じ時間軸に並べた再生音（スピーカーに出した伴奏＋ガイド）
+function cancelBacking(mic,ref,sr){
+  const {delay,conf}=echoDelay(mic,ref,sr);
+  const margin=Math.min(delay,96),sh=delay-margin,n=mic.length,r2=new Float32Array(n);
+  for(let i=0;i<n;i++){const j=i-sh;r2[i]=j>=0&&j<ref.length?ref[j]:0;}
+  let h=null;for(let it=0;it<3;it++)h=estimatePath(mic,r2,4096,8192,h);
+  const y=convolveFFT(r2,h,n),e=new Float32Array(n);for(let i=0;i<n;i++)e[i]=mic[i]-y[i];
+  return {voice:residualSuppress(e,y,sr,1,.2),delaySec:delay/sr,conf};}
 /* ============ アプリ状態 ============ */
-const state={famicom:false,genre:'kawaii',diff:'kid',range:'mid',endMode:'loop',song:null,lyricMap:[],lines:[],
+const state={famicom:false,genre:'kawaii',progMode:'auto',diff:'kid',range:'mid',endMode:'loop',song:null,lyricMap:[],lines:[],
   backingBuf:null,guideBuf:null,rendering:false,raw:null,rawStart:0,track:null,corrected:null,mixBuf:null,
   videoBlob:null,videoExt:'webm',live:[],inArtifact:!!(window.claude&&window.claude.use)};
 let actx=null;
@@ -1406,15 +1486,16 @@ function chipRow(el,entries,key,onPick){el.innerHTML='';for(const [k,label] of e
 chipRow($('#jpChips'),Object.entries(GENRES).filter(([k,g])=>g.group==='jp').map(([k,g])=>[k,g.emoji+' '+g.name]),'genre');
 chipRow($('#wChips'),Object.entries(GENRES).filter(([k,g])=>g.group==='w').map(([k,g])=>[k,g.emoji+' '+g.name]),'genre');
 chipRow($('#diffChips'),Object.entries(DIFF).map(([k,d])=>[k,d.name]),'diff');
+chipRow($('#progChips'),[['auto','🎲 おまかせ（ジャンルに合わせる）'],['komuro','🎆 小室進行'],['marusa','🌃 丸サ進行']],'progMode');
 chipRow($('#rangeChips'),Object.entries(RANGES).map(([k,r])=>[k,r.name]),'range');
 chipRow($('#endChips'),[['loop','🔁 ループ（頭に戻る）'],['ending','🎬 エンディングあり']],'endMode');
 
 let genJob=0;
 function songInfo(){const s=state.song,G=GENRES[s.genre];
-  $('#songInfo').innerHTML=`${s.famicom?'🎮 <b>ファミコン音源</b>　':''}${G.emoji} <b>${G.name}</b>（${G.tag}）<br>キー <b>${NOTE_NAMES[pc(s.root+(s.minor?9:0))]}${s.minor?'m':''}</b>　テンポ <b>${s.bpm}</b>　長さ 約<b>${Math.round(playLen(s))}</b>秒　終わり方 <b>${{loop:'🔁 ループ',ring:'余韻で終わる',stab:'ジャン！で決める',fade:'フェードアウト'}[s.ending]}</b><br>コード <b>${chordNamesOf(s).join(' → ')}</b>`;}
+  $('#songInfo').innerHTML=`${s.famicom?'🎮 <b>ファミコン音源</b>　':''}${G.emoji} <b>${G.name}</b>（${G.tag}）<br>キー <b>${NOTE_NAMES[pc(s.root+(s.minor?9:0))]}${s.minor?'m':''}</b>　テンポ <b>${s.bpm}</b>　長さ 約<b>${Math.round(playLen(s))}</b>秒　終わり方 <b>${{loop:'🔁 ループ',ring:'余韻で終わる',stab:'ジャン！で決める',fade:'フェードアウト'}[s.ending]}</b><br>コード${s.progMode&&s.progMode!=='auto'?'（'+PROG_MODES[s.progMode].name+'）':''} <b>${chordNamesOf(s).join(' → ')}</b>`;}
 async function newSong(){
   stopAll();const job=++genJob;
-  state.song=generateSong(state.genre,state.diff,state.range,state.endMode);state.song.famicom=state.famicom;
+  state.song=generateSong(state.genre,state.diff,state.range,state.endMode,state.progMode);state.song.famicom=state.famicom;
   Object.assign(state,{backingBuf:null,guideBuf:null,raw:null,track:null,corrected:null,mixBuf:null,live:[],videoBlob:null});
   $('#vprev').style.display='none';$('#vwrap').style.display='none';
   const s=state.song,G=GENRES[s.genre];
@@ -1545,7 +1626,7 @@ $('#recBtn').onclick=async()=>{
     e.outputBuffer.getChannelData(0).fill(0);
     const res=yin(d,0,d.length,c.sampleRate);if(res.f&&res.rms>.01){const t=c.currentTime-r.t0-d.length/c.sampleRate/2-lat;let m=ftom(res.f);const nn=noteAt(s,t);if(nn)m=m+12*Math.round((nn.midi-m)/12);state.live.push({t,m});}};
   src.connect(proc);proc.connect(sink);
-  r.t0=playBuffers([[state.backingBuf,.85],[state.guideBuf,(+$('#guideVol').value)/100]],.35);
+  r.gv=(+$('#guideVol').value)/100;r.t0=playBuffers([[state.backingBuf,.85],[state.guideBuf,r.gv]],.35);
   $('#recBtn').textContent='■ 録音を止める';$('#recStatus').textContent='録音中… イントロのあと、画面の流れに合わせて歌ってください';
   $('#lat').value=Math.round(lat*1000);$('#latV').textContent=$('#lat').value+'ms';
   animate(()=>c.currentTime-r.t0,playLen(s)+.3,()=>finishRecording(false));
@@ -1557,9 +1638,20 @@ function finishRecording(manual){
   const len=r.chunks.reduce((a,b)=>a+b.length,0);if(len<getCtx().sampleRate){$('#recStatus').textContent='録音が短すぎました。もう一度どうぞ。';state.live=[];drawRoll(null);return;}
   const raw=new Float32Array(len);let o=0;for(const ch of r.chunks){raw.set(ch,o);o+=ch.length;}
   state.raw=raw;state.rawStart=r.t0-r.first;state.live=[];
-  $('#recStatus').textContent=manual?'録音を止めました。下で仕上げましょう。':'録音できました！下で仕上げましょう。';
-  analyzeAndMix(true);
+  const done=()=>{$('#recStatus').textContent=manual?'録音を止めました。下で仕上げましょう。':'録音できました！下で仕上げましょう。';analyzeAndMix(true);};
+  if(!$('#spkMode').checked){done();return;}
+  // スピーカーモード：スピーカーから出した伴奏＋ガイドを録音から引き算して声だけにする
+  $('#recStatus').innerHTML='<span class="busy"></span>スピーカーの伴奏の音を消しています…';
+  setTimeout(()=>{try{const sr=getCtx().sampleRate,ref=playedRef(raw.length,state.rawStart,sr,r.gv);const res=cancelBacking(raw,ref,sr);
+      state.raw=res.voice;state.rawOrig=raw;
+      if(res.conf>6){const ms=Math.round(res.delaySec*1000/10)*10;$('#lat').value=clamp(ms,-200,400);$('#latV').textContent=$('#lat').value+'ms';}}
+    catch(e){console.error(e);}done();},40);
 }
+// 録音中にスピーカーへ出した音（伴奏0.85＋ガイド）を、録音と同じ時間軸のモノラル信号にする
+function playedRef(n,start,sr,gv){const ref=new Float32Array(n),o=Math.round(start*sr);
+  for(const [b,g] of [[state.backingBuf,.85],[state.guideBuf,gv]]){if(!b||!g)continue;const C=b.numberOfChannels,ch=[];for(let c=0;c<C;c++)ch.push(b.getChannelData(c));
+    for(let i=Math.max(0,o);i<n;i++){const j=i-o;if(j>=b.length)break;let x=0;for(let c=0;c<C;c++)x+=ch[c][j];ref[i]+=x/C*g;}}
+  return ref;}
 function showFallback(){$('#micFallback').classList.remove('hide');toast('マイクが使えない環境です');}
 $('#fileIn').onchange=async e=>{const f=e.target.files[0];if(!f)return;const c=getCtx();
   try{const ab=await f.arrayBuffer();const b=await new Promise((res,rej)=>{const p=c.decodeAudioData(ab,res,rej);if(p&&p.then)p.then(res,rej);});
