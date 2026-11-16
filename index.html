@@ -691,6 +691,7 @@ const GENRES={
     colors:['#22302b','#6b8f71','#f3e3c3'],tag:'宅録っぽいゆるさ'}
 };
 const DIFF={
+  kid:{name:'やさしい',span:7,maxLeap:4,stepBias:3,cells:[[4,4,4,4],[4,4,8]],ends:[[4,4,8]]},
   easy:{name:'かんたん',span:7,maxLeap:4,stepBias:3,
     cells:[[4,4,4,4],[-4,4,4,4],[4,4,8],[4,2,2,4,4],[2,2,4,4,4],[4,4,2,2,4]],
     ends:[[4,4,4,-4],[2,2,4,4,-4],[4,8,-4],[4,4,8]]},
@@ -918,13 +919,49 @@ function genMelody(sk,G,D,R,diffKey){
   if(cPick)addPick(4);if(vPick)addPick(0);
   return notes.map(n=>({start:n.start,dur:n.dur,midi:n.midi,phrase:n.ph}));
 }
+// ---- やさしいモード：「たべたい たべたい たべたい ケーキ」型（子どもでも言葉をはめやすい）----
+// 2拍ごとに同じ言葉のかたまり（3〜4音）を3回 → しめの言葉。2小節目のフレーズは1つ目とまったく同じ。サビは少し高い音で同じ形。
+function genKidMelody(sk,G){
+  const root=sk.root,I=sk.intro*16,keyPcs=MAJ.map(i=>pc(root+i)),lo=sk.lo,hi=sk.hi;
+  const DIA=[];for(let m=lo-4;m<=hi+5;m++)if(keyPcs.includes(pc(m)))DIA.push(m);
+  const di=m=>{let k=0,b=1e9;DIA.forEach((x,i)=>{if(Math.abs(x-m)<b){b=Math.abs(x-m);k=i;}});return k;};
+  const stab=(abs,m)=>stablePcs(root,harmAt(sk,abs)).includes(pc(m));
+  const near=(abs,m,lim=4)=>{let best=m,bd=1e9;for(let q=m-lim;q<=m+lim;q++){if(!keyPcs.includes(pc(q))||!stab(abs,q))continue;const d=Math.abs(q-m)+(q>hi+2||q<lo-2?3:0);if(d<bd){bd=d;best=q;}}return best;};
+  const bot=lo,top=lo+9;
+  const k=pick([3,4,4]);
+  const RH=k===4?[[0,2],[2,2],[4,2],[6,2]]:pick([[[0,2],[2,2],[4,4]],[[0,2],[2,2],[4,2]]]);
+  const CT=k===4?pick([[0,0,0,-1],[0,0,1,0],[0,1,0,-1],[1,0,0,0],[0,0,-1,-1],[0,1,1,0]]):pick([[0,0,1],[0,1,0],[0,0,-1],[1,0,0],[0,-1,0]]);
+  const tailN=pick([1,2,2,3]);const notes=[];
+  // フレーズの形（音の高さの並び）を決める：3回の頭の拍すべてで和音に合う音を優先
+  const makeShape=(base,start)=>{let best=null,bs=1e9;
+    for(let a=base-3;a<=base+3;a++){if(!keyPcs.includes(pc(a)))continue;const ia=di(a);
+      const pit=CT.map(c=>DIA[Math.max(0,Math.min(DIA.length-1,ia+c))]);let sc=Math.abs(a-base)*.4;
+      for(const st0 of [start,start+32])for(let r=0;r<3;r++)RH.forEach(([o],j)=>{const ab=st0+r*8+o;if(ab%4===0&&!stab(ab,pit[j]))sc+=3;else if(!stab(ab,pit[j]))sc+=.3;});pit.forEach(m=>{if(m>top||m<bot)sc+=2;});
+      if(sc<bs){bs=sc;best=pit;}}return best;};
+  const phrase=(ph,shape,start,last)=>{
+    for(let r=0;r<3;r++){// 和音に合わなければ形ごと音階上でずらす（輪郭はそのまま）
+      let bs=1e9,bsh=0;for(const sh of [0,-1,1,-2,2]){let sc=Math.abs(sh)*.9;const ps=shape.map(m=>DIA[Math.max(0,Math.min(DIA.length-1,di(m)+sh))]);
+        RH.forEach(([o],j)=>{const ab=start+r*8+o;if(!stab(ab,ps[j]))sc+=ab%4===0?3:.4;if(ps[j]>top||ps[j]<bot)sc+=2;});if(sc<bs){bs=sc;bsh=sh;}}
+      RH.forEach(([o,d],j)=>{const ab=start+r*8+o;let m=DIA[Math.max(0,Math.min(DIA.length-1,di(shape[j])+bsh))];if(ab%4===0&&!stab(ab,m))m=near(ab,m,2);notes.push({start:ab,dur:d,midi:m,phrase:ph});});}
+    // しめの言葉：下りながら着地して伸ばす（最後は息つぎ分あける）
+    const tOn=[24,26,28].slice(0,tailN);let prev=notes[notes.length-1].midi;
+    tOn.forEach((o,i)=>{const ab=start+o,isL=i===tailN-1,dur=isL?30-o:2;let m;
+      if(isL){const c=harmAt(sk,ab),st=stablePcs(root,c);let want;
+        if(last==='tonic'){const tp=pc(root+(sk.minor?9:0));want=st.includes(tp)?tp:pc(root+c[0]);}else want=pick(st.filter(p=>p!==pc(root+c[0]))||st)??st[0];
+        const cs=[];for(let q=bot;q<=top;q++)if(pc(q)===want)cs.push(q);if(!cs.length)for(let q=bot-3;q<=top+3;q++)if(pc(q)===want)cs.push(q);m=cs.reduce((a,b)=>Math.abs(b-prev)<Math.abs(a-prev)?b:a);}
+      else{m=DIA[Math.max(0,di(prev)-1)];if(m<bot)m=DIA[di(prev)+1];if(ab%4===0&&!stab(ab,m))m=near(ab,m,2);}
+      notes.push({start:ab,dur:dur,midi:m,phrase:ph});prev=m;});};
+  const vBase=lo+2,cBase=vBase+pick([3,4]);
+  const vs=makeShape(vBase,I),cs=makeShape(cBase,I+64);
+  phrase(0,vs,I,'open');phrase(1,vs,I+32,'tonic');phrase(2,cs,I+64,'open');phrase(3,cs,I+96,'tonic');
+  return notes;}
 function generateSong(gKey,diffKey,rangeKey,endMode='loop'){
   const G=GENRES[gKey],D=DIFF[diffKey],R=RANGES[rangeKey];
   const loop=endMode!=='ending',ending=loop?'loop':pick(['ring','stab','fade']);
   const bpm=ri(G.bpm[0],G.bpm[1]),root=ri(0,11),progKey=pick(G.progs),prog=PROG[progKey],intro=bpm>=135?2:1;
   const lo=R.center-Math.floor(D.span/2)+((MEL_STYLE[gKey]||{}).shift||0),hi=lo+D.span;
   const s={genre:gKey,diff:diffKey,range:rangeKey,bpm,root,progKey,prog,intro,minor:!!G.minor,loop,ending,lo,hi,s16:60/bpm/4,mel:MEL_STYLE[gKey]||MEL_STYLE.band,notes:[]};
-  let notes=genMelody(s,G,D,R,diffKey);
+  let notes=diffKey==='kid'?genKidMelody(s,G):genMelody(s,G,D,R,diffKey);
   // 半小節でコードが変わる所をまたぐ長い音は、後半のコードに合わせて2音に分ける（食いは除く）
   for(let i=0;i<notes.length;i++){const n=notes[i],nb=Math.floor(n.start/8)*8+8;if(n.start+n.dur<=nb||nb-n.start<=2)continue;
     const c2=harmAt(s,nb);if(c2===harmAt(s,n.start)||stablePcs(root,c2).includes(pc(n.midi)))continue;
@@ -1355,7 +1392,7 @@ function wavBlob(buf){const ch=buf.numberOfChannels,n=buf.length,sr=buf.sampleRa
   return new Blob([ab],{type:'audio/wav'});}
 
 /* ============ アプリ状態 ============ */
-const state={famicom:false,genre:'kawaii',diff:'easy',range:'mid',endMode:'loop',song:null,lyricMap:[],lines:[],
+const state={famicom:false,genre:'kawaii',diff:'kid',range:'mid',endMode:'loop',song:null,lyricMap:[],lines:[],
   backingBuf:null,guideBuf:null,rendering:false,raw:null,rawStart:0,track:null,corrected:null,mixBuf:null,
   videoBlob:null,videoExt:'webm',live:[],inArtifact:!!(window.claude&&window.claude.use)};
 let actx=null;
