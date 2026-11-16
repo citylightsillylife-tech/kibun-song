@@ -449,7 +449,7 @@ const SYN_PRESETS={
   reeseBass:{label:'リースベース',o1w:'saw',o2w:'saw',o2det:22,uni:2,uDet:10,uSpread:.3,ms:.5,cut:500,res:.15,drive:2.2,kt:.2,fEnv:.5,aS:1,aR:.1,mono:true,glide:.03,lfoFilt:.4,lfoRate:.6,sat:.3,satA:.1,gain:0.0898},
   fingerBass:{label:'フィンガーベース（モデリング）',o1w:'tri',o2w:'saw',m2:.28,o3w:'sine',o3r:.5,m3:.35,cut:360,res:.12,drive:1.5,kt:.55,fEnv:1.7,fA:.001,fD:.13,fS:.32,fR:.06,aA:.002,aD:.9,aS:.5,aR:.07,velF:.9,mono:true,slop:2.5,click:.14,clickD:.005,pEnv:10,pDec:.03,sat:.14,satA:.25,eq:[['peaking',180,1,2],['peaking',1200,1,1.5]],gain:0.16},
   pickBass:{label:'ピック弾きベース（モデリング）',o1w:'saw',o2w:'pulse',o2pw:.3,o2det:4,m2:.4,o3w:'sine',o3r:.5,m3:.45,cut:620,res:.15,drive:1.8,kt:.6,fEnv:2.6,fA:.0008,fD:.12,fS:.45,fR:.05,velF:.8,aA:.001,aD:.8,aS:.7,aR:.05,mono:true,slop:2,click:.38,clickD:.003,pEnv:6,pDec:.02,sat:.3,satA:.2,eq:[['highpass',35,.7],['peaking',800,1,3],['highshelf',3000,null,2]],gain:0.12},
-  slapBass:{label:'スラップベース（モデリング）',o1w:'saw',o2w:'pulse',o2pw:.18,o2det:3,m2:.55,o3w:'sine',o3r:.5,m3:.6,cut:320,res:.22,drive:2,kt:.6,fEnv:5.6,fA:.0008,fD:.065,fS:.2,fR:.04,velF:1.4,aA:.001,aD:.32,aS:.42,aR:.045,mono:true,slop:2,click:.5,clickD:.0035,pEnv:28,pDec:.016,sat:.3,satA:.22,
+  slapBass:{label:'スラップベース（モデリング）',o1w:'saw',o2w:'pulse',o2pw:.18,o2det:3,m2:.55,o3w:'sine',o3r:.5,m3:.6,cut:320,res:.22,drive:2,kt:.6,fEnv:5.6,fA:.0008,fD:.065,fS:.2,fR:.04,velF:1.4,aA:.001,aD:.32,aS:.42,aR:.045,mono:true,slop:1,click:.5,clickD:.0035,pEnv:12,pDec:.012,sat:.3,satA:.22,
     eq:[['highpass',38,.7],['peaking',480,.9,-6],['peaking',2700,1.1,5],['highshelf',6500,null,3]],gain:0.153},
   bass808:{label:'808ベース',o1w:'sine',m2:0,ms:0,cut:900,res:0,drive:3,sat:.45,satA:.1,kt:.2,fEnv:0,aA:.002,aD:1.2,aS:.4,aR:.15,pEnv:1100,pDec:.05,mono:true,glide:.04,slop:0,gain:0.21},
   polyPad:{label:'ポリパッド（Prophet系）',o1w:'saw',o2w:'pulse',o2pw:.42,o2det:8,m2:.7,uni:2,uDet:9,uSpread:.7,cut:900,res:.18,drive:1.1,kt:.4,fEnv:1.2,fA:.7,fD:1.2,fS:.4,fR:1.2,aA:.5,aD:1,aS:.85,aR:1.2,lfoRate:.35,lfoPwm:.25,lfoFilt:.15,slop:5,gain:0.0191},
@@ -1293,7 +1293,7 @@ function bassRootPos(rootPc,prev,G){let best=null,bs=1e9;
 // 意図（x=根音 o=オクターブ 5=5度 3=3度 p=次の根音への半音下アプローチ g=ゴースト）→ 押さえられる位置の音
 function bassNote(ch,pos,c,nextRootPc,_){const r=BT[pos.str]+pos.fret,q=QUAL[c[1]];
   if(ch==='o')return r+12;                 // 2本上の弦・+2フレット
-  if(ch==='5')return r+7;                  // 隣の弦・+2フレット
+  if(ch==='5')return r+(q[2]!=null&&q[2]<12?q[2]:7);   // その和音の5度（♭5・増5も）                  // 隣の弦・+2フレット
   if(ch==='3')return r+q[1];               // 長3度＝隣の弦-1フレット／短3度＝同じ弦+3フレット
   if(ch==='p'){const np=bassRootPos(nextRootPc,pos,_);return BT[np.str]+np.fret-1;} // 次に押さえる根音の半音下
   return r;}
@@ -1504,7 +1504,7 @@ function voice(ctx,dest,type,t,f,dur,vel=1,fx=null,pan=0){
       const l=mkOsc(ctx,'sine',5,t,end+.3);const lg=mkGain(ctx,f*.012);l.connect(lg);lg.connect(o.frequency);break;}
   }
 }
-const BASS_OCT={pickb:12,sub:0,'808':0,sawb:12,synthb:12,slap:12,reese:12,fingerb:12};
+const BASS_OCT={pickb:12,sub:0,'808':0,sawb:12,synthb:12,slap:0,reese:12,fingerb:12};
 function drum(ctx,dest,type,t,vel=1,fx=null,kickType='punch'){
   t=Math.max(0,t);
   if(fx&&fx.kit&&fx.kit[type]){const vs=fx.kit[type];const s=ctx.createBufferSource();const ci=type==='conga'?(Math.random()<.5?0:1):type==='tom'?(fx.tomI=((fx.tomI==null?-1:fx.tomI)+1)%vs.length):Math.floor(Math.random()*vs.length);s.buffer=vs[ci];
@@ -1691,7 +1691,7 @@ function scheduleSong(ctx,out,song,t0,opt={}){
           else V(ctx,dst,L.i,t,v.map(m=>mtof(up(m+(L.oct||0)))),len*.92,vel,null,0);}
       });
       // ベース（生ベース系は4弦ベースの指板で運指を決める）
-      if(!isIntro){const p=G.bass.p,bi=G.bass.i,live=LIVE_BASS.includes(bi),oc=(BASS_OCT[bi]||0);
+      if(!isIntro){const p=G.bass.p,bi=G.bass.i,live=LIVE_BASS.includes(bi),oc=(BASS_OCT[bi]||0),bCap=Math.max(50,song.lo-3); // ベースは歌の一番低い音より下に置く
         const nextC=barChords(song,b+1)[0],nr=pc(song.root+nextC[0]);
         const fill=live&&vb%2===1&&vb!==3&&pc(song.root+chords[chords.length-1][0])!==nr&&Math.random()<.65;
         const hits=[];for(let i=0;i<16;i++){const ch=p[i];if(ch==='.')continue;if(fill&&i>=12)continue;let j=i+1;while(j<16&&p[j]==='.')j++;if(fill&&j>12)j=12;hits.push({i,j,ch});}
@@ -1700,8 +1700,9 @@ function scheduleSong(ctx,out,song,t0,opt={}){
           if(vb===3&&i>=(G.kime?8:12))continue; // サビ前のブレイク
           const c=chords[chordIdx(i)];let m;
           if(live){const pos=bassRootPos(pc(song.root+c[0]),song._bpos,G);song._bpos=pos;m=bassNote(ch,pos,c,nr,G)+oc;}
-          else{m=33+pc(song.root+c[0]-9)+oc;if(ch==='o')m+=12;if(ch==='5')m+=7;if(ch==='3')m+=QUAL[c[1]][1];
+          else{m=33+pc(song.root+c[0]-9)+oc;if(ch==='o')m+=12;if(ch==='5')m+=QUAL[c[1]][2]??7;if(ch==='3')m+=QUAL[c[1]][1];
             if(ch==='p')m=33+pc(song.root+nextC[0]-9)+oc-1;}
+          while(m>bCap)m-=12;
           lastM=m;const sl=bi==='slap'||bi==='fingerb',acc=ch==='g'?.32:(ch==='o'&&sl?1.3:1),bl=ch==='g'?s16*.45:(j-i)*s16*.92;
           V(ctx,bassBus,bi,stepT(bt,i),mtof(m),bl,(sec==='v'?.9:1)*acc);}
         if(fill){// 次のコードの根音へ歩いていく（音階の順次進行／半音アプローチ）
@@ -1710,7 +1711,7 @@ function scheduleSong(ctx,out,song,t0,opt={}){
           const walk=[];let x=tgt;for(let k=0;k<2;k++){x+=up?-1:1;while(!inS(x))x+=up?-1:1;walk.unshift(x);}
           if(Math.random()<.4)walk[1]=tgt+(up?-1:1);
           const steps=song.bpm>135?[12,14]:pick([[12,14],[12,14,15]]);const ns=steps.length===3?[walk[0],walk[1],tgt+(up?-1:1)]:walk;
-          steps.forEach((st,k)=>{const nx=steps[k+1]??16;V(ctx,bassBus,bi,stepT(bt,st),mtof(ns[k]+oc),(nx-st)*s16*.9,(sec==='v'?.9:1)*(k===0?1:.92));});}}
+          steps.forEach((st,k)=>{const nx=steps[k+1]??16;let wm=ns[k]+oc;while(wm>bCap)wm-=12;V(ctx,bassBus,bi,stepT(bt,st),mtof(wm),(nx-st)*s16*.9,(sec==='v'?.9:1)*(k===0?1:.92));});}}
       // ドラム
       const pat=isIntro?(G.noIntroDrums?{}:{h:G.drums.v.h,sh:G.drums.v.sh,o:b===song.intro-1?G.drums.v.o:null}):G.drums[sec];
       const map={k:'kick',s:'snare',c:'clap',h:'hat',o:'ohat',sh:'shaker',rm:'rim',cg:'conga',tm:'tom'};
